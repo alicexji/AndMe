@@ -1,0 +1,9 @@
+{
+  "name": "machine-me-verifier",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {"dev": "vite", "build": "tsc -b && vite build"},
+  "dependencies": {"@tailwindcss/vite": "latest", "@vitejs/plugin-react": "latest", "lucide-react": "latest", "motion": "latest", "tailwindcss": "latest", "vite": "latest", "typescript": "latest", "react": "latest", "react-dom": "latest"},
+  "devDependencies": {"@types/react": "latest", "@types/react-dom": "latest"}
+}
