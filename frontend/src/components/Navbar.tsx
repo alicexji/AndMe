@@ -3,7 +3,7 @@ import { useState } from 'react'
 import type { Page } from '../App'
 
 const links: [string, Page][] = [
-  ['Studio', 'studio'], ['Archive', 'archive'], ['Engine', 'engine'], ['Docs', 'docs'],
+  ['Studio', 'studio'], ['Archive', 'archive'], ['Engine', 'engine'], ['Playground', 'playground'], ['Docs', 'docs'],
 ]
 
 export default function Navbar({ activePage, onNavigate }: { activePage: Page; onNavigate: (page: Page) => void }) {
@@ -22,4 +22,3 @@ export default function Navbar({ activePage, onNavigate }: { activePage: Page; o
     </div>}
   </>
 }
-

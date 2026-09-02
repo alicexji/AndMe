@@ -4,12 +4,13 @@ import Archive from './pages/Archive'
 import Docs from './pages/Docs'
 import Engine from './pages/Engine'
 import Home from './pages/Home'
+import Playground from './pages/Playground'
 
-export type Page = 'studio' | 'archive' | 'engine' | 'docs'
+export type Page = 'studio' | 'archive' | 'engine' | 'playground' | 'docs'
 
 const currentPage = (): Page => {
   const value = window.location.hash.replace('#/', '').replace('#', '')
-  return ['archive', 'engine', 'docs'].includes(value) ? value as Page : 'studio'
+  return ['archive', 'engine', 'playground', 'docs'].includes(value) ? value as Page : 'studio'
 }
 
 export default function App() {
@@ -24,6 +25,6 @@ export default function App() {
     if (window.location.hash === hash) window.scrollTo({ top: 0, behavior: 'smooth' })
     else window.location.hash = hash
   }
-  const content = page === 'archive' ? <Archive /> : page === 'engine' ? <Engine /> : page === 'docs' ? <Docs /> : <Home onNavigate={navigate} />
+  const content = page === 'archive' ? <Archive /> : page === 'engine' ? <Engine /> : page === 'playground' ? <Playground /> : page === 'docs' ? <Docs /> : <Home onNavigate={navigate} />
   return <Layout activePage={page} onNavigate={navigate}>{content}</Layout>
 }
