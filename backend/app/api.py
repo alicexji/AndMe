@@ -10,8 +10,9 @@ from .auth import require_ingestion_key
 from .config import Settings, get_settings
 from .db import get_db
 from .media import LocalMediaStore
-from .models import HumanObservation, MediaAsset, ObservationType
-from .schemas import DayOut, MediaOut, ObservationCreate, ObservationOut
+from .models import HumanObservation, MachineEvent, MediaAsset, ObservationType
+from .schemas import (DayOut, MachineDayOut, MachineEventOut, MediaOut,
+                      ObservationCreate, ObservationOut)
 
 router = APIRouter(prefix="/api")
 
@@ -95,3 +96,18 @@ def observations_for_day(day: date, db: Session = Depends(get_db), settings: Set
     output = [observation_out(item, settings) for item in observations]
     return DayOut(date=day.isoformat(), timezone=settings.app_timezone, observations=output)
 
+
+@router.get("/days/{day}/machine-events", response_model=MachineDayOut)
+def machine_events_for_day(day: date, db: Session = Depends(get_db),
+                           settings: Settings = Depends(get_settings)):
+    zone = ZoneInfo(settings.app_timezone)
+    start = datetime.combine(day, time.min, zone).astimezone(timezone.utc)
+    end = datetime.combine(day, time.max, zone).astimezone(timezone.utc)
+    events = db.scalars(select(MachineEvent)
+                        .where(MachineEvent.timestamp >= start, MachineEvent.timestamp <= end)
+                        .order_by(MachineEvent.timestamp)).all()
+    return MachineDayOut(
+        date=day.isoformat(), timezone=settings.app_timezone,
+        events=[MachineEventOut(id=item.id, timestamp=item.timestamp, source=item.source,
+                                metric=item.metric, value=item.value, unit=item.unit)
+                for item in events])

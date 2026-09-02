@@ -39,3 +39,17 @@ class DayOut(BaseModel):
     timezone: str
     observations: list[ObservationOut]
 
+
+class MachineEventOut(BaseModel):
+    id: str
+    timestamp: datetime
+    source: str
+    metric: str
+    value: float | None
+    unit: str | None
+
+
+class MachineDayOut(BaseModel):
+    date: str
+    timezone: str
+    events: list[MachineEventOut]

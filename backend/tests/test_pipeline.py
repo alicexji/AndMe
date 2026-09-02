@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import HumanObservation, MediaAsset, ObservationType
+from app.models import HumanObservation, MachineEvent, MediaAsset, ObservationType
 
 AUTH = {"Authorization": "Bearer test-secret-key"}
 
@@ -59,3 +59,16 @@ def test_photo_and_optional_text_are_preserved(client):
         media = db.scalar(select(MediaAsset))
         assert media.media_type == "image/jpeg"
         assert media.byte_count == len(raw_photo)
+
+
+def test_machine_events_remain_a_separate_read_stream(client):
+    with SessionLocal() as db:
+        db.add(MachineEvent(timestamp=datetime(2026, 8, 31, 18, 0, tzinfo=timezone.utc),
+                            source="test_sensor", metric="steps", value=42, unit="count",
+                            raw_payload={"raw": 42}))
+        db.commit()
+    response = client.get("/api/days/2026-08-31/machine-events")
+    assert response.status_code == 200
+    assert response.json()["events"][0]["metric"] == "steps"
+    with SessionLocal() as db:
+        assert db.scalar(select(HumanObservation)) is None

@@ -44,3 +44,18 @@ export interface ArchiveDay {
   observations: Observation[]
 }
 
+export interface MachineEvent {
+  id: string
+  timestamp: string
+  source: string
+  metric: string
+  value: number | null
+  unit: string | null
+}
+
+export interface MachineDay {
+  date: string
+  timezone: string
+  events: MachineEvent[]
+}
+
