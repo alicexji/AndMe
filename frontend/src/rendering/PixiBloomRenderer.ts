@@ -3,12 +3,14 @@ import { BloomSimulation, DEPARTURE_MS } from './BloomSimulation'
 import { BLOOM_STRIDE, type BloomFeatures } from './protocol'
 import { bloomFragment, bloomVertex } from './BloomShader'
 import { GRID_SPACING, gridAnchor } from './BloomGrid'
+import { isPaper, isStrip, presetVertex, presetFragment, presetGeometry, type PresetMode } from './PresetShaders'
 
 
 const FIXED_STEP = 1 / 30
 const INSTANCE_STRIDE = 12
-// 180 live blooms plus a bounded tail of retiring blooms, not a hidden particle pool.
-const MAX_INSTANCES = 360
+// Up to 180 source records plus retiring records; particles expand each into at most 27 marks.
+const MAX_INSTANCES = 360 * 30
+const PALETTE = [0xff4a22,0x1646d8,0xf4cd24,0xd84967,0x58db8b,0x739bbc].map(c => [(c>>16)/255,((c>>8)&255)/255,(c&255)/255])
 const smoothstep = (start: number, end: number, value: number) => {
   const x = Math.max(0, Math.min(1, (value - start) / (end - start)))
   return x * x * (3 - 2 * x)
@@ -20,7 +22,7 @@ export class PixiBloomRenderer {
   private simulation = new BloomSimulation()
   private controls: BloomRendererControls = { lifetime: 16, density: 82, intensity: 82, complexity: 78, motion: 65 }
   private features: BloomFeatures = { data: new Float32Array(), keys: [] }
-  private instanceData = new Float32Array(MAX_INSTANCES * INSTANCE_STRIDE)
+  private instanceData: Float32Array
   private buffer: Buffer | null = null
   private geometry: Geometry | null = null
   private shader: Shader | null = null
@@ -42,34 +44,40 @@ export class PixiBloomRenderer {
   private lastFrame = 0
   private statsStarted = 0
 
-  constructor(private host: HTMLElement, private onFailure: (error: Error) => void) {}
+  constructor(private host: HTMLElement, private onFailure: (error: Error) => void, private mode: PresetMode = 'bloom') {
+    const capacity = mode === 'particles' ? MAX_INSTANCES : isStrip(mode) ? 360 * 3 : 360
+    this.instanceData = new Float32Array(capacity * INSTANCE_STRIDE)
+  }
 
   async init() {
     try {
-      await this.app.init({ preference: 'webgl', preferWebGLVersion: 2, powerPreference: 'high-performance', background: 0x000000,
+      await this.app.init({ preference: 'webgl', preferWebGLVersion: 2, powerPreference: 'high-performance', background: isPaper(this.mode) ? 0xeee9dc : this.mode === 'bloom' ? 0x000000 : 0x11110f,
         antialias: false, autoDensity: true, resolution: Math.min(window.devicePixelRatio || 1, 2), autoStart: false, sharedTicker: false })
       if (this.destroyed) { this.app.destroy(true, { children: true }); return }
       this.initialized = true
       this.host.replaceChildren(this.app.canvas)
-      this.app.canvas.className = 'pixi-bloom-canvas'
-      this.dotGrid = document.createElement('div')
-      this.dotGrid.className = 'bloom-dot-grid'
-      this.dotGrid.setAttribute('aria-hidden', 'true')
-      this.dotGrid.style.backgroundSize = `${GRID_SPACING}px ${GRID_SPACING}px`
-      this.host.appendChild(this.dotGrid)
+      this.app.canvas.className = this.mode === 'bloom' ? 'pixi-bloom-canvas' : 'pixi-art-canvas'
+      if (this.mode === 'bloom') {
+        this.dotGrid = document.createElement('div')
+        this.dotGrid.className = 'bloom-dot-grid'
+        this.dotGrid.setAttribute('aria-hidden', 'true')
+        this.dotGrid.style.backgroundSize = `${GRID_SPACING}px ${GRID_SPACING}px`
+        this.host.appendChild(this.dotGrid)
+      }
       this.buffer = new Buffer({ data: this.instanceData, usage: BufferUsage.VERTEX | BufferUsage.COPY_DST, shrinkToFit: false })
+      const shape = presetGeometry(this.mode)
       this.geometry = new Geometry({
         attributes: {
-          aPosition: { buffer: new Float32Array([-1,-1, 1,-1, 1,1, -1,1]), format: 'float32x2' },
+          aPosition: { buffer: shape.positions, format: 'float32x2' },
           aBloom: { buffer: this.buffer, format: 'float32x4', stride: 48, offset: 0, instance: true },
           aColor: { buffer: this.buffer, format: 'float32x4', stride: 48, offset: 16, instance: true },
           aShape: { buffer: this.buffer, format: 'float32x4', stride: 48, offset: 32, instance: true },
         },
-        indexBuffer: new Uint16Array([0,1,2, 0,2,3]), instanceCount: 0,
+        indexBuffer: shape.indices, instanceCount: 0,
       })
-      this.shader = new Shader({ glProgram: new GlProgram({ vertex: bloomVertex, fragment: bloomFragment, name: 'dissolving-bloom', preferredFragmentPrecision: 'highp' }), resources: { bloomUniforms: this.uniforms } })
+      this.shader = new Shader({ glProgram: new GlProgram({ vertex: this.mode === 'bloom' ? bloomVertex : presetVertex(this.mode), fragment: this.mode === 'bloom' ? bloomFragment : presetFragment(this.mode), name: `art-${this.mode}`, preferredFragmentPrecision: 'highp' }), resources: { bloomUniforms: this.uniforms } })
       this.mesh = new Mesh({ geometry: this.geometry, shader: this.shader })
-      this.mesh.blendMode = 'screen'
+      this.mesh.blendMode = this.mode === 'bloom' || this.mode === 'particles' ? 'screen' : 'normal'
       this.app.stage.addChild(this.mesh)
       if (import.meta.env.DEV || new URLSearchParams(window.location.search).has('perf')) {
         this.performanceElement = document.createElement('div')
@@ -112,6 +120,7 @@ export class PixiBloomRenderer {
     if (!this.initialized || this.destroyed) return
     const width = Math.max(1, this.host.clientWidth), height = Math.max(1, this.host.clientHeight)
     this.app.renderer.resize(width, height)
+    if (this.mode === 'ledger') this.host.style.setProperty('--ledger-cell', `${Math.max(34, Math.min(62, width / 14))}px`)
     this.simulation.setSize(width, height)
   }
 
@@ -148,7 +157,7 @@ export class PixiBloomRenderer {
           const sorted = [...this.frameIntervals].sort((a,b) => a-b)
           const mean = sorted.reduce((sum,value) => sum+value,0) / sorted.length
           const p95 = sorted[Math.min(sorted.length-1, Math.floor(sorted.length*.95))]
-          this.performanceElement.textContent = `${(1000/mean).toFixed(0)} FPS / ${p95.toFixed(1)} MS P95 / ${this.frameWork.toFixed(2)} MS CPU+SUBMIT / ${this.geometry!.instanceCount} BLOOMS / ${this.app.renderer.resolution.toFixed(1)}x DPR`
+          this.performanceElement.textContent = `${(1000/mean).toFixed(0)} FPS / ${p95.toFixed(1)} MS P95 / ${this.frameWork.toFixed(2)} MS CPU+SUBMIT / ${this.geometry!.instanceCount} MARKS / ${this.app.renderer.resolution.toFixed(1)}x DPR`
         }
         this.frameIntervals.length = 0; this.statsStarted = started
       }
@@ -169,12 +178,16 @@ export class PixiBloomRenderer {
       if (opacity < .001) continue
       this.simulation.sampleInto(state, interpolation, this.sample)
       const [, , phase, normalized] = this.sample
+      if (this.mode !== 'bloom') {
+        visible = this.writePreset(data, this.sample, age, opacity, visible)
+        continue
+      }
       // Emit from fixed survey points; only the atmospheric field drifts.
       const x = gridAnchor(data[0], this.simulation.width), y = gridAnchor(data[1], this.simulation.height)
       const radius = 48 + normalized * 102
       const extent = radius * 1.65
       if (x + extent < 0 || y + extent < 0 || x - extent > this.simulation.width || y - extent > this.simulation.height) continue
-      if (visible >= MAX_INSTANCES) break
+      if (visible >= this.instanceData.length / INSTANCE_STRIDE) break
       const offset = visible * INSTANCE_STRIDE
       this.instanceData[offset] = x; this.instanceData[offset+1] = y; this.instanceData[offset+2] = radius; this.instanceData[offset+3] = 0
       this.instanceData[offset+4] = .12; this.instanceData[offset+5] = .42; this.instanceData[offset+6] = 1; this.instanceData[offset+7] = opacity
@@ -184,7 +197,7 @@ export class PixiBloomRenderer {
     // Broad overlapping fields are fill-rate limited. Keep the CSS dot lattice at
     // native resolution while limiting shader pixels for crowded scenes.
     const nativeResolution = Math.min(window.devicePixelRatio || 1, 2)
-    const resolution = Math.min(nativeResolution, visible > 90 ? 1.25 : visible > 55 ? 1.5 : 2)
+    const resolution = this.mode === 'bloom' ? Math.min(nativeResolution, visible > 90 ? 1.25 : visible > 55 ? 1.5 : 2) : nativeResolution
     if (this.app.renderer.resolution !== resolution) {
       this.app.renderer.resize(this.simulation.width, this.simulation.height, resolution)
     }
@@ -195,6 +208,39 @@ export class PixiBloomRenderer {
     this.uniforms.uniforms.uTime = this.flowTime
     this.uniforms.uniforms.uComplexity = this.controls.complexity / 100
     this.uniforms.update()
+  }
+
+  private writePreset(data: Float32Array, sample: Float32Array, age: number, opacity: number, count: number) {
+    const [sx,sy,phase,value] = sample, width=this.simulation.width, height=this.simulation.height
+    const color = PALETTE[Math.floor(data[5]) % PALETTE.length]
+    const emit = (x:number,y:number,size:number,alpha:number,seed=data[4]) => {
+      if(count>=this.instanceData.length / INSTANCE_STRIDE || (!isStrip(this.mode) && (x+size<0 || y+size<0 || x-size>width || y-size>height))) return
+      const o=count++*INSTANCE_STRIDE
+      const b=this.instanceData
+      b[o]=x; b[o+1]=y; b[o+2]=size; b[o+3]=value
+      b[o+4]=color[0]; b[o+5]=color[1]; b[o+6]=color[2]; b[o+7]=alpha
+      b[o+8]=seed; b[o+9]=age; b[o+10]=phase; b[o+11]=data[3]
+    }
+    if(this.mode==='particles') {
+      const total=5+Math.floor(value*12+this.controls.complexity*.10)
+      for(let k=0;k<total;k++) {
+        const angle=phase+k*2.399963, orbit=(12+k*3.5)*(0.5+Math.sin(age*Math.PI)*.5)
+        emit(sx+Math.cos(angle)*orbit,sy+Math.sin(angle*1.17)*orbit,2.5+(k%4)*.9,opacity*(.45+(k%3)*.2))
+      }
+    } else if(isStrip(this.mode)) {
+      const layers=1+Math.floor(this.controls.complexity/40)
+      for(let k=0;k<layers;k++) emit(0,data[1]*height+k*(6+data[3]*8),width,opacity*(k===0?.72:.2),data[4]+k*.7)
+    } else if(this.mode==='matrix'||this.mode==='ledger') {
+      const cell=this.mode==='matrix'?70:Math.max(34,Math.min(62,width/14))
+      const cols=Math.max(1,Math.floor(width/cell)),rows=Math.max(1,Math.floor(height/cell))
+      const x=(Math.min(cols-1,Math.floor(data[0]*cols))+.5)*cell
+      const y=(Math.min(rows-1,Math.floor(data[1]*rows))+.5)*cell
+      emit(x,y,cell*.47,opacity)
+    } else {
+      const staff=Math.floor(data[1]*Math.max(1,(height-42)/42))
+      emit(data[0]*width,28+staff*42+Math.floor(data[3]*4)*4,18+value*35,opacity)
+    }
+    return count
   }
 
   private contextLost = (event: Event) => { event.preventDefault(); this.fail(new Error('WebGL context lost; using Canvas fallback.')) }

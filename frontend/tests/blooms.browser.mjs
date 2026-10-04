@@ -53,6 +53,16 @@ try {
   console.log('Screenshot:', screenshotPath)
   assert.deepEqual(errors, [], 'No browser errors during integration')
 
+  for (const [index, mode] of ['matrix','particles','signals','notation','currents','ledger'].entries()) {
+    await evaluate(`document.querySelectorAll('.mode-strip button')[${index+1}].click()`)
+    await sleep(1600)
+    assert.equal(await evaluate(`!!document.querySelector('.preset-${mode} .pixi-art-canvas')`), true, mode+' uses WebGL')
+    console.log(mode+' integration:', await evaluate(`document.querySelector('.pixi-performance')?.textContent`))
+    const shot=await send('Page.captureScreenshot',{format:'png'})
+    await writeFile(join(tmpdir(),`preset-${mode}.png`),Buffer.from(shot.data,'base64'))
+  }
+  assert.deepEqual(errors, [], 'Every preset compiles and renders without browser errors')
+
   // Exercise renderer lifecycle and visibility with reproducible input, independent of network timing.
   await evaluate(`(async () => {
     location.hash = '#/docs';
@@ -87,6 +97,23 @@ try {
   assert.equal(await evaluate(`bloomCheck.renderer.simulation.states.size`), 0)
   assert.equal(await evaluate(`bloomCheck.renderer.geometry.instanceCount`), 0)
   await evaluate(`bloomCheck.renderer.destroy(); bloomCheck.renderer.destroy(); bloomCheck.host.remove()`)
+  for (const mode of ['matrix','particles','signals','notation','currents','ledger']) {
+    await evaluate(`(async () => {
+      const { PixiBloomRenderer, buildBloomFeatures } = await import('/bloom-check/entry.js');
+      const host=document.createElement('div'); host.style.cssText='position:fixed;inset:0;z-index:99999';document.body.appendChild(host);
+      const renderer=new PixiBloomRenderer(host,error=>console.error(error),'${mode}'); await renderer.init();
+      const events=Array.from({length:180},(_,i)=>({id:'dense-'+i,label:'Source '+i,value:i,secondary:i%40,time:i,born:performance.now()-2000,rawFieldCount:5}));
+      renderer.setFeatures(buildBloomFeatures({events,reference:events,axis:'value',scale:'linear'}));
+      window.presetCheck={renderer,host};
+    })()`)
+    await sleep(1500)
+    assert.ok(await evaluate(`presetCheck.renderer.geometry.instanceCount > 0`), mode+' has visible geometry')
+    console.log(mode+' dense:',await evaluate(`presetCheck.host.querySelector('.pixi-performance')?.textContent`))
+    await evaluate(`presetCheck.renderer.setControls({lifetime:1,density:82,intensity:82,complexity:78,motion:65})`)
+    await sleep(100)
+    assert.equal(await evaluate(`presetCheck.renderer.geometry.instanceCount`),0,mode+' releases expired instances')
+    await evaluate(`presetCheck.renderer.destroy();presetCheck.host.remove()`)
+  }
   await evaluate(`(async () => {
     const { PixiBloomRenderer } = await import('/bloom-check/entry.js');
     for(let i=0;i<3;i++) {
