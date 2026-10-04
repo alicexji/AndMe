@@ -94,11 +94,14 @@ test('wave origins stay on the dot lattice across responsive sizes', () => {
 })
 
 const { scoreY, composeScore } = await import(moduleURL(new URL('../src/rendering/NotationScore.ts', import.meta.url)))
-test('notation maps metric endpoints to the bottom and top staff lines', () => {
-  assert.ok(Math.abs(scoreY(0, 0) - (88 + 640 / 3 * .4)) < 1e-9)
-  assert.equal(scoreY(0, 1), 88)
-  assert.ok(Math.abs(scoreY(1, .5) - 344) < 1e-9)
-  assert.equal(scoreY(0, -1), scoreY(0, 0))
+test('notation metrics anchor to a continuous grid across the full height', () => {
+  for (const height of [400, 600, 800]) {
+    assert.equal(scoreY(1, height), 64)
+    assert.ok(scoreY(0, height) <= height - 72)
+    assert.ok(scoreY(0, height) > height - 96)
+    for (let i=0;i<=100;i++) assert.equal((scoreY(i/100,height)-64)%24,0)
+    assert.equal(scoreY(-1,height),scoreY(0,height))
+  }
 })
 test('notation composition handles no data and respects finite batch capacity', () => {
   const buffer = new Float32Array(12 * 20)

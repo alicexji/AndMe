@@ -1,6 +1,6 @@
-export const STAFF_TOP = 88
-export const STAFF_COUNT = 3
-export interface ScoreNode { key: string; x: number; staff: number; value: number; secondary: number; opacity: number; color: number[] }
+export const GRID_TOP = 64
+export const LINE_SPACING = 24
+export interface ScoreNode { key: string; x: number; value: number; secondary: number; opacity: number; color: number[] }
 export const NOTATION_PALETTE = ['a90046','B23917','FF2e02','e5b673','ff9102','ff7202','ff026b','02d9ff','3a86b2'].map(hex => [0,2,4].map(i => parseInt(hex.slice(i,i+2),16)/255))
 type FallingNode = { born: number; points: {x:number;y:number}[]; color:number[] }
 const flights = new WeakMap<Float32Array, { next:number; serial:number; nodes:FallingNode[] }>()
@@ -9,16 +9,16 @@ function nodeColor(node:ScoreNode) {
   for(const character of node.key) hash=(Math.imul(hash,31)+character.charCodeAt(0))|0
   return NOTATION_PALETTE[(hash>>>0)%NOTATION_PALETTE.length]
 }
-export function scoreY(staff: number, metric: number, height = 800) {
-  const gap = Math.max(1, height - STAFF_TOP - 72) / STAFF_COUNT
-  return STAFF_TOP + staff * gap + (8 - Math.round(Math.max(0, Math.min(1, metric)) * 8)) * gap * .05
+export function scoreY(metric: number, height = 800) {
+  const intervals = Math.max(0, Math.floor((height - GRID_TOP - 72) / LINE_SPACING))
+  return GRID_TOP + Math.round((1 - Math.max(0, Math.min(1, metric))) * intervals) * LINE_SPACING
 }
 
 // All translucent fields, graph edges, and dots share one antialiased GPU batch.
 export function composeScore(nodes: ScoreNode[], time: number, complexity: number, buffer: Float32Array, width = 1000, height = 800) {
   let count = 0
   nodes = nodes.map(n => ({...n,color:nodeColor(n)}))
-  const y = (n: ScoreNode) => scoreY(n.staff, n.value, height)
+  const y = (n: ScoreNode) => scoreY(n.value, height)
   const mark = (x:number,y:number,w:number,h:number,type:number,color:number[],opacity:number,angle=0) => {
     if(count >= buffer.length / 12) return
     const i = count++ * 12
@@ -27,16 +27,16 @@ export function composeScore(nodes: ScoreNode[], time: number, complexity: numbe
   // Multiple narrow, tall bands per record build an overlapping field across the page.
   const bands = 5 + Math.floor(complexity / 25)
   const span = Math.max(1, width - 40)
-  const gap = Math.max(1, height - STAFF_TOP - 72) / STAFF_COUNT
+  const arcHeight = Math.min(170, height * .22)
   for(const n of nodes) for(let k=0;k<bands;k++) {
     const variation = (n.secondary + k * .381966) % 1
     const x = 20 + ((n.x - 20 + k * span / bands) % span + span) % span
-    const center = scoreY(n.staff, n.secondary, height) + gap * .18
+    const center = scoreY(variation, height)
     mark(x,center,18,36,1,n.color,n.opacity * (.075 + variation * .09))
   }
   const arc = (a:ScoreNode,b:ScoreNode) => {
     const ay=y(a),by=y(b),cx=(a.x+b.x)/2
-    const cy=Math.min(ay,by)-Math.min(gap*.8,28+Math.abs(b.x-a.x)*.22)
+    const cy=Math.min(ay,by)-Math.min(arcHeight,28+Math.abs(b.x-a.x)*.22)
     const color=a.color
     let lx=a.x,ly=ay
     for(let step=1;step<=40;step++) {
@@ -47,23 +47,13 @@ export function composeScore(nodes: ScoreNode[], time: number, complexity: numbe
       lx=nx;ly=ny
     }
   }
-  // Persistent graph edges include several links between neighboring systems.
-  const groups=Array.from({length:STAFF_COUNT},(_,staff)=>nodes.filter(n=>n.staff===staff).sort((a,b)=>a.x-b.x||a.key.localeCompare(b.key)))
-  for(const group of groups) {
-    if(!group.length) continue
-    const limit=4+Math.floor(complexity/12)
-    const stride=Math.max(1,Math.ceil((group.length-1)/limit))
-    for(let i=0;i<group.length-1;i+=stride) {
-      const target=Math.min(group.length-1,i+Math.max(1,Math.floor(group.length/5)))
-      arc(group[i],group[target])
-    }
-  }
-  for(let i=1;i<groups.length;i++) {
-    const previous=groups[i-1],current=groups[i]
-    if(!previous.length || !current.length) continue
-    for(let k=0;k<Math.min(5,previous.length,current.length);k++) {
-      arc(previous[Math.floor(k*previous.length/5)],current[Math.min(current.length-1,Math.floor((k+.5)*current.length/5))])
-    }
+  // Connections span the entire field, independent of former staff boundaries.
+  const ordered=[...nodes].sort((a,b)=>y(a)-y(b)||a.x-b.x||a.key.localeCompare(b.key))
+  const limit=16+Math.floor(complexity/3)
+  const stride=Math.max(1,Math.ceil(ordered.length/limit))
+  for(let i=0;i<ordered.length-1;i+=stride) {
+    const target=Math.min(ordered.length-1,i+1+(i%3)*Math.max(1,Math.floor(ordered.length/7)))
+    arc(ordered[i],ordered[target])
   }
   for(const n of nodes) mark(n.x,y(n),13,13,0,n.color,n.opacity)
 
@@ -75,7 +65,11 @@ export function composeScore(nodes: ScoreNode[], time: number, complexity: numbe
   }
   if(nodes.length && time>=state.next) {
     const serial=state.serial++
-    const route=groups.filter(group=>group.length).map((group,i)=>group[(serial*7+i*3)%group.length])
+    const steps=Math.min(4,ordered.length)
+    const route=Array.from({length:steps},(_,i)=>{
+      const start=Math.floor(i*ordered.length/steps),end=Math.floor((i+1)*ordered.length/steps)
+      return ordered[start+(serial*7)%Math.max(1,end-start)]
+    })
     const first=route[0],last=route[route.length-1]
     const points=[{x:first.x/width,y:-30/height},...route.map(n=>({x:n.x/width,y:y(n)/height})),{x:Math.max(.03,Math.min(.97,last.x/width+(serial%2?.16:-.16))),y:1+50/height}]
     state.nodes.push({born:time,points,color:NOTATION_PALETTE[serial%NOTATION_PALETTE.length]})

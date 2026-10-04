@@ -3,7 +3,7 @@ import { BloomSimulation, DEPARTURE_MS } from './BloomSimulation'
 import { BLOOM_STRIDE, type BloomFeatures } from './protocol'
 import { bloomFragment, bloomVertex } from './BloomShader'
 import { GRID_SPACING, gridAnchor } from './BloomGrid'
-import { composeScore, STAFF_COUNT, type ScoreNode, notationVertex, notationFragment } from './NotationScore'
+import { composeScore, type ScoreNode, notationVertex, notationFragment } from './NotationScore'
 import { isPaper, isStrip, presetVertex, presetFragment, presetGeometry, type PresetMode } from './PresetShaders'
 
 
@@ -182,8 +182,7 @@ export class PixiBloomRenderer {
       this.simulation.sampleInto(state, interpolation, this.sample)
       const [, , phase, normalized] = this.sample
       if (this.mode === 'notation') {
-        const staffs = STAFF_COUNT
-        this.scoreNodes.push({key:state.key,x:28+data[0]*(this.simulation.width-56),staff:Math.min(staffs-1,Math.floor(data[1]*staffs)),value:normalized,secondary:data[3],opacity,color:PALETTE[Math.floor(data[5])%PALETTE.length]})
+        this.scoreNodes.push({key:state.key,x:28+data[0]*(this.simulation.width-56),value:normalized,secondary:data[3],opacity,color:PALETTE[Math.floor(data[5])%PALETTE.length]})
         continue
       }
       if (this.mode !== 'bloom') {
