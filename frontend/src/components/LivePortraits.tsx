@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity, Fingerprint } from 'lucide-react'
-import GenerativeCanvas from './GenerativeCanvas'
+import PortraitCanvas from './PortraitCanvas'
 import type { ArchiveDay, DataPoint, MachineDay } from '../types'
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10) }
-const fallback: DataPoint[] = Array.from({ length: 18 }, (_, i) => ({ value: .03, secondary: i / 18, timestamp: i }))
 
 export default function LivePortraits() {
   const [human, setHuman] = useState<ArchiveDay | null>(null)
@@ -45,16 +44,16 @@ export default function LivePortraits() {
   })) ?? [], [machine, max])
 
   return <section className="live-portraits">
-    <div className="live-heading"><div><p className="section-code">LIVE DOUBLE PORTRAIT / TODAY</p><h2>TWO WITNESSES.<br />ONE DAY.</h2></div><p>Each canvas polls the raw archive every ten seconds and grows as its corresponding record accumulates.</p></div>
+    <div className="live-heading"><div><p className="section-code">LIVE DOUBLE PORTRAIT / TODAY</p><h2>TWO WITNESSES.<br />ONE DAY.</h2></div><p>A continuous current. A moment held onto. Two portraits shaped by the traces of your day.</p></div>
     <div className="portrait-grid">
       <article className="portrait-panel machine-portrait">
         <div className="portrait-top"><span>01 / MACHINE</span><span><i className={machineData.length ? '' : 'waiting'} /> {machineData.length ? 'STREAM ACTIVE' : 'AWAITING DATA'}</span></div>
-        <div className="portrait-canvas"><GenerativeCanvas data={machineData.length ? machineData : fallback} settings={{ palette:['#1646d8','#f3f0e7','#6f716e','#ff4a22'], density:1.15, speed:.65, randomness:.35 }} /><div className="portrait-watermark"><Activity /> THE DAY ACCORDING TO THE MACHINE</div></div>
+        <div className="portrait-canvas"><PortraitCanvas data={machineData} kind="machine" /><div className="portrait-art-title"><span>CONTINUOUS / 01</span><h3>Signal field</h3><p>Everything that passes.</p></div><span className="portrait-art-note">{machineData.length ? "EVENT-DRIVEN CONTOURS" : "AMBIENT STUDY / NO EVENTS YET"}</span><div className="portrait-watermark"><Activity /> THE DAY ACCORDING TO THE MACHINE</div></div>
         <div className="portrait-bottom"><strong>{String(machineData.length).padStart(3,'0')}</strong><span>passive events today</span><span>{machine?.events.at(-1)?.metric ?? 'No machine source connected'}</span></div>
       </article>
       <article className="portrait-panel human-portrait">
         <div className="portrait-top"><span>02 / ME</span><span><i className={humanData.length ? '' : 'waiting'} /> {humanData.length ? 'ARCHIVE GROWING' : 'AWAITING NOTICE'}</span></div>
-        <div className="portrait-canvas"><GenerativeCanvas data={humanData.length ? humanData : fallback} settings={{ palette:['#ff4a22','#f4cd24','#f3f0e7','#d84967'], density:.82, speed:.9, randomness:.9 }} /><div className="portrait-watermark"><Fingerprint /> THE DAY ACCORDING TO ME</div></div>
+        <div className="portrait-canvas"><PortraitCanvas data={humanData} kind="human" /><div className="portrait-art-title"><span>INTENTIONAL / 02</span><h3>Traces of attention</h3><p>Something worth keeping.</p></div><span className="portrait-art-note">{humanData.length ? "MOMENTS INTO RINGS" : "AMBIENT STUDY / NO MOMENTS YET"}</span><div className="portrait-watermark"><Fingerprint /> THE DAY ACCORDING TO ME</div></div>
         <div className="portrait-bottom"><strong>{String(humanData.length).padStart(3,'0')}</strong><span>chosen moments today</span><span>{human?.observations.at(-1)?.local_time ?? 'No notice preserved yet'}</span></div>
       </article>
     </div>
