@@ -24,7 +24,7 @@ const datasets: Dataset[] = [
     transform:(r,i)=>({id:`weather-${r.city}-${i}`,label:String(r.city),value:number(r.temperature),secondary:number(r.wind),time:Date.parse(String(r.observed)),raw:r}) },
 ]
 const modes:{id:ArtMode;name:string;description:string}[]=[
-  {id:'bloom',name:'Dissolving blooms',description:'Translucent contours breathe, overlap and dissolve into noise.'},
+  {id:'bloom',name:'Dissolving blooms',description:'Blue wavefronts radiate from a survey grid through shifting fields of color.'},
   {id:'matrix',name:'Constructive matrix',description:'A shifting grammar of cells, crosses, arcs and cuts.'},
   {id:'particles',name:'Particle weather',description:'Records become charged matter in a turbulent field.'},
   {id:'signals',name:'Signal strata',description:'Layered traces accumulate like an unstable landscape.'},

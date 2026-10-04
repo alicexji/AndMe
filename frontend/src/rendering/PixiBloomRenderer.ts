@@ -2,8 +2,9 @@ import { Application, Buffer, BufferUsage, Geometry, GlProgram, Mesh, Shader, Ti
 import { BloomSimulation, DEPARTURE_MS } from './BloomSimulation'
 import { BLOOM_STRIDE, type BloomFeatures } from './protocol'
 import { bloomFragment, bloomVertex } from './BloomShader'
+import { GRID_SPACING, gridAnchor } from './BloomGrid'
 
-const COLORS = [0xf37852, 0x558bdf, 0xecc777, 0xd981a1, 0x77c4b0, 0xe9e3d4].map(color => [(color >> 16) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255])
+
 const FIXED_STEP = 1 / 30
 const INSTANCE_STRIDE = 12
 // 180 live blooms plus a bounded tail of retiring blooms, not a hidden particle pool.
@@ -34,6 +35,7 @@ export class PixiBloomRenderer {
   private visible = true
   private resizeObserver: ResizeObserver | null = null
   private intersectionObserver: IntersectionObserver | null = null
+  private dotGrid: HTMLDivElement | null = null
   private performanceElement: HTMLDivElement | null = null
   private frameIntervals: number[] = []
   private frameWork = 0
@@ -44,12 +46,17 @@ export class PixiBloomRenderer {
 
   async init() {
     try {
-      await this.app.init({ preference: 'webgl', preferWebGLVersion: 2, powerPreference: 'high-performance', background: 0x11110f,
+      await this.app.init({ preference: 'webgl', preferWebGLVersion: 2, powerPreference: 'high-performance', background: 0x000000,
         antialias: false, autoDensity: true, resolution: Math.min(window.devicePixelRatio || 1, 2), autoStart: false, sharedTicker: false })
       if (this.destroyed) { this.app.destroy(true, { children: true }); return }
       this.initialized = true
       this.host.replaceChildren(this.app.canvas)
       this.app.canvas.className = 'pixi-bloom-canvas'
+      this.dotGrid = document.createElement('div')
+      this.dotGrid.className = 'bloom-dot-grid'
+      this.dotGrid.setAttribute('aria-hidden', 'true')
+      this.dotGrid.style.backgroundSize = `${GRID_SPACING}px ${GRID_SPACING}px`
+      this.host.appendChild(this.dotGrid)
       this.buffer = new Buffer({ data: this.instanceData, usage: BufferUsage.VERTEX | BufferUsage.COPY_DST, shrinkToFit: false })
       this.geometry = new Geometry({
         attributes: {
@@ -161,16 +168,25 @@ export class PixiBloomRenderer {
       const opacity = life * departure * (.25 + this.controls.intensity / 145)
       if (opacity < .001) continue
       this.simulation.sampleInto(state, interpolation, this.sample)
-      const [x,y,phase,normalized] = this.sample
-      const radius = (22 + normalized * 80) * (.88 + .12 * Math.sin(age * Math.PI))
-      const extent = radius * 1.3
+      const [, , phase, normalized] = this.sample
+      // Emit from fixed survey points; only the atmospheric field drifts.
+      const x = gridAnchor(data[0], this.simulation.width), y = gridAnchor(data[1], this.simulation.height)
+      const radius = 48 + normalized * 102
+      const extent = radius * 1.65
       if (x + extent < 0 || y + extent < 0 || x - extent > this.simulation.width || y - extent > this.simulation.height) continue
       if (visible >= MAX_INSTANCES) break
-      const color = COLORS[Math.floor(data[5]) % COLORS.length], offset = visible * INSTANCE_STRIDE
+      const offset = visible * INSTANCE_STRIDE
       this.instanceData[offset] = x; this.instanceData[offset+1] = y; this.instanceData[offset+2] = radius; this.instanceData[offset+3] = 0
-      this.instanceData[offset+4] = color[0]; this.instanceData[offset+5] = color[1]; this.instanceData[offset+6] = color[2]; this.instanceData[offset+7] = opacity
+      this.instanceData[offset+4] = .12; this.instanceData[offset+5] = .42; this.instanceData[offset+6] = 1; this.instanceData[offset+7] = opacity
       this.instanceData[offset+8] = data[4]; this.instanceData[offset+9] = age; this.instanceData[offset+10] = phase; this.instanceData[offset+11] = data[3]
       visible++
+    }
+    // Broad overlapping fields are fill-rate limited. Keep the CSS dot lattice at
+    // native resolution while limiting shader pixels for crowded scenes.
+    const nativeResolution = Math.min(window.devicePixelRatio || 1, 2)
+    const resolution = Math.min(nativeResolution, visible > 90 ? 1.25 : visible > 55 ? 1.5 : 2)
+    if (this.app.renderer.resolution !== resolution) {
+      this.app.renderer.resize(this.simulation.width, this.simulation.height, resolution)
     }
     // Only live, on-screen instances are uploaded and drawn. Capacity is just reusable bytes.
     this.geometry.instanceCount = visible
@@ -198,6 +214,7 @@ export class PixiBloomRenderer {
     this.simulation.states.clear()
     if (!this.initialized) return
     this.app.canvas.removeEventListener('webglcontextlost', this.contextLost)
+    this.dotGrid?.remove(); this.dotGrid = null
     this.performanceElement?.remove()
     this.app.destroy(true, { children: true })
     this.geometry?.destroy(true)

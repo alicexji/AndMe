@@ -75,3 +75,8 @@ button,a { -webkit-tap-highlight-color:transparent; }
 .live-portraits .portrait-bottom span:last-child{text-align:left;overflow-wrap:anywhere;font-size:8px}
 @media(max-width:800px){.live-portraits .portrait-canvas{height:530px}.portrait-art-title h3{font-size:40px}}
 @media(max-width:420px){.live-portraits .portrait-canvas{height:440px}.portrait-art-title{left:20px}.portrait-art-title h3{font-size:32px}.portrait-top{gap:12px}}
+
+/* The survey field is clean black, with a crisp CSS-resolution sampling lattice. */
+.app-shell:has(.pixi-bloom-host) > .grain{display:none}
+.pixi-bloom-host{background:#000}
+.bloom-dot-grid{position:absolute;inset:0;pointer-events:none;background-image:radial-gradient(circle,rgba(255,255,255,.72) 0 .7px,transparent 1.2px);background-repeat:repeat}

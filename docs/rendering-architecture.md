@@ -30,7 +30,7 @@ React owns dataset selection, playback, controls, and the raw-data tape. API res
 
 ## Rendering and removal
 
-`BloomShader.ts` renders analytic contours, translucent interiors, and Perlin-noise erosion on an instanced quad. Derivative antialiasing maintains smooth edges at different radii and pixel densities. Screen blending creates luminous overlap without full-screen blur or trail buffers. Noise evolves using an integrated motion clock.
+`BloomShader.ts` renders three expanding blue wavefronts and an advected Perlin-noise pressure field on each instanced quad. Primary normalized values set maximum wave reach (48?150 CSS pixels); the secondary feature controls atmospheric intensity and drift. Origins snap to the fixed 32px white-dot lattice using `BloomGrid.ts`. Positions are a generative survey layout, not real geographic coordinates. Cool blue/cyan fields develop localized warm cores when secondary values are strong. Waves erode and fade with distance from their originating dot. The background is pure black and the page grain overlay is disabled while this artwork is mounted. Derivative antialiasing maintains smooth edges at different radii and pixel densities. The CSS dot overlay remains sharp at display resolution. Screen blending creates luminous overlap without full-screen blur or trail buffers. Noise evolves using an integrated motion clock.
 
 `PixiBloomRenderer` submits one mesh containing only visible blooms. Expired simulation states are deleted every frame, including when ingestion is paused. Density reductions retire older states over 400 ms before deletion. Offscreen bounds and effectively zero opacity are excluded from the draw. There are no alpha-zero particle objects left in a scene graph. A bounded reusable byte buffer holds at most 360 instances (180 active plus retirement capacity); only its visible prefix is uploaded and drawn.
 
@@ -47,3 +47,7 @@ Malformed feature buffers, initialization failure, context loss, or three consec
 From `frontend/`, run `npm run test:blooms` (Node 22.13+ for built-in TypeScript stripping) and `npm run build`.
 
 `tests/blooms.browser.mjs` runs deterministic browser checks using Chrome DevTools Protocol, without a browser automation dependency. It expects an isolated Chromium browser debugging endpoint at `127.0.0.1:9223` and the built-app test server at `127.0.0.1:5175` (`node tests/serve-blooms.mjs` after building). It stubs the earthquake API, checks real WebGL startup, captures an image to the OS temp directory, and verifies density retirement, expiry removal, offscreen suspension, resize, and repeated/early teardown.
+
+The atmospheric layer extends to 1.62 times wave reach, with a broader falloff, crosswind advection, and slowly deforming pressure cells. Ring half-width is 0.68 CSS pixels before antialiasing. Pale-blue source glows grow with normalized magnitude and pulse according to the launch and travel of each outgoing wave.
+
+Broad-field rendering caps shader resolution at 1.5? above 55 visible sources and 1.25? above 90, preserving fill-rate headroom. The CSS dot grid stays at native display resolution.

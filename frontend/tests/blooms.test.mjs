@@ -83,3 +83,12 @@ test('resize preserves normalized positions in both interpolation states', () =>
   assert.equal(state.current[0], x * 2)
   assert.equal(state.previous[0], x * 2)
 })
+
+const { gridAnchor, GRID_SPACING } = await import(moduleURL(new URL('../src/rendering/BloomGrid.ts', import.meta.url)))
+test('wave origins stay on the dot lattice across responsive sizes', () => {
+  for (const extent of [375, 800, 1440]) for (const value of [0, .08, .33, .95, 1]) {
+    const position = gridAnchor(value, extent)
+    assert.equal((position - GRID_SPACING / 2) % GRID_SPACING, 0)
+    assert.ok(position >= 0 && position <= extent)
+  }
+})

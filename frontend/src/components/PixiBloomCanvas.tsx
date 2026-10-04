@@ -42,5 +42,5 @@ export default function PixiBloomCanvas({ events, reference, controls, fallback 
   }, [events, reference, controls.axis, controls.scale])
   useEffect(() => { renderer.current?.setControls(controls) }, [controls])
   if (failed) return fallback
-  return <div ref={host} className="pixi-bloom-host" role="img" aria-label="Dissolving blooms: animated translucent contours shaped by incoming data" />
+  return <div ref={host} className="pixi-bloom-host" role="img" aria-label="Dissolving blooms: blue wavefronts radiate from white survey dots through drifting atmospheric color fields" />
 }

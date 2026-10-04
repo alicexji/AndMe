@@ -43,7 +43,7 @@ try {
     await sleep(250)
   }
 
-  assert.equal(await evaluate(`!!document.querySelector('.pixi-bloom-canvas')`), true, 'WebGL renderer should mount')
+  assert.equal(await evaluate(`!!document.querySelector('.pixi-bloom-canvas')`), true, 'WebGL renderer should mount: ' + JSON.stringify(errors))
   await evaluate(`document.querySelector('.art-stage').scrollIntoView()`)
   await sleep(6500)
   console.log('Integration stats:', await evaluate(`document.querySelector('.pixi-performance')?.textContent`))
