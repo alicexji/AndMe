@@ -1,14 +1,15 @@
-import type { PreprocessRequest, PreprocessResponse, WorkerEvent } from './protocol'
+import type { BloomFeatures, BloomReference, PreprocessRequest, PreprocessResponse, WorkerEvent } from './protocol'
 
 export interface BloomPreprocessOptions {
   axis: PreprocessRequest['axis']
   scale: PreprocessRequest['scale']
+  reference: BloomReference[]
 }
 
 export class BloomPreprocessor {
   private worker = new Worker(new URL('../workers/artPreprocess.worker.ts', import.meta.url), { type: 'module' })
   private requestId = 0
-  private pending = new Map<number, { resolve: (data: Float32Array) => void; reject: (error: Error) => void }>()
+  private pending = new Map<number, { resolve: (data: BloomFeatures) => void; reject: (error: Error) => void }>()
 
   constructor() {
     this.worker.onmessage = (message: MessageEvent<PreprocessResponse>) => {
@@ -16,7 +17,7 @@ export class BloomPreprocessor {
       if (!pending) return
       this.pending.delete(message.data.requestId)
       if (message.data.type === 'worker-error') pending.reject(new Error(message.data.message))
-      else pending.resolve(new Float32Array(message.data.data))
+      else pending.resolve({ data: new Float32Array(message.data.data), keys: message.data.keys })
     }
     this.worker.onerror = event => {
       const error = new Error(event.message || 'The art preprocessing worker stopped.')
@@ -25,7 +26,7 @@ export class BloomPreprocessor {
     }
   }
 
-  preprocess(events: WorkerEvent[], options: BloomPreprocessOptions): Promise<Float32Array> {
+  preprocess(events: WorkerEvent[], options: BloomPreprocessOptions): Promise<BloomFeatures> {
     const requestId = ++this.requestId
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject })
@@ -39,4 +40,3 @@ export class BloomPreprocessor {
     this.pending.clear()
   }
 }
-

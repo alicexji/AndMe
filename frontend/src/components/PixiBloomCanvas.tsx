@@ -1,43 +1,46 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Controls, Datum } from '../pages/Playground'
+import type { BloomReference } from '../rendering/protocol'
 import { BloomPreprocessor } from '../rendering/BloomPreprocessor'
 import { PixiBloomRenderer } from '../rendering/PixiBloomRenderer'
 
-export default function PixiBloomCanvas({ events, controls, fallback }: { events: Datum[]; controls: Controls; fallback: React.ReactNode }) {
+export default function PixiBloomCanvas({ events, reference, controls, fallback }: { events: Datum[]; reference: BloomReference[]; controls: Controls; fallback: React.ReactNode }) {
   const host = useRef<HTMLDivElement>(null)
   const renderer = useRef<PixiBloomRenderer | null>(null)
-  const preprocessor = useRef<BloomPreprocessor | null>(null)
+  const submit = useRef<(() => void) | null>(null)
   const generation = useRef(0)
-  const dirty = useRef(true)
-  const latest = useRef({ events, axis: controls.axis, scale: controls.scale })
+  const latest = useRef({ events, reference, axis: controls.axis, scale: controls.scale })
   const [failed, setFailed] = useState(false)
-  latest.current = { events, axis: controls.axis, scale: controls.scale }
-  dirty.current = true
 
   useEffect(() => {
-    if (!host.current) return
-    const nextRenderer = new PixiBloomRenderer(host.current, () => setFailed(true))
-    const nextPreprocessor = new BloomPreprocessor()
-    renderer.current = nextRenderer; preprocessor.current = nextPreprocessor
-    nextRenderer.init()
-    const pump = window.setInterval(() => {
-      if (!dirty.current || !preprocessor.current) return
-      dirty.current = false
-      const currentGeneration = ++generation.current, snapshot = latest.current
+    if (!host.current || failed) return
+    let alive = true, inFlight = false, dirty = false
+    let processor: BloomPreprocessor
+    const next = new PixiBloomRenderer(host.current, () => { if (alive) setFailed(true) })
+    try { processor = new BloomPreprocessor() } catch { next.destroy(); setFailed(true); return }
+    renderer.current = next
+    void next.init()
+    const pump = () => {
+      dirty = true
+      if (inFlight || !alive) return
+      dirty = false; inFlight = true
+      const version = generation.current, snapshot = latest.current
       const input = snapshot.events.map(event => ({ id: event.id, label: event.label, value: event.value, secondary: event.secondary, time: event.time, born: event.born, rawFieldCount: Object.keys(event.raw).length }))
-      preprocessor.current.preprocess(input, { axis: snapshot.axis, scale: snapshot.scale })
-        .then(data => { if (currentGeneration === generation.current) renderer.current?.setFeatures(data) })
-        .catch(() => { if (currentGeneration === generation.current) setFailed(true) })
-    }, 200)
-    return () => { window.clearInterval(pump); generation.current++; nextPreprocessor.destroy(); nextRenderer.destroy(); renderer.current = null; preprocessor.current = null }
-  }, [])
-
-  useEffect(() => { renderer.current?.setControls(controls) }, [controls])
-  useEffect(() => {
-    if (!failed) return
-    renderer.current?.destroy(); preprocessor.current?.destroy()
-    renderer.current = null; preprocessor.current = null
+      processor.preprocess(input, { reference: snapshot.reference, axis: snapshot.axis, scale: snapshot.scale })
+        .then(features => { if (alive && version === generation.current) next.setFeatures(features) })
+        .catch(() => { if (alive) setFailed(true) })
+        .finally(() => { inFlight = false; if (alive && dirty) pump() })
+    }
+    submit.current = pump
+    return () => { alive = false; submit.current = null; processor.destroy(); next.destroy(); renderer.current = null }
   }, [failed])
+
+  useEffect(() => {
+    latest.current = { events, reference, axis: controls.axis, scale: controls.scale }
+    generation.current++
+    submit.current?.()
+  }, [events, reference, controls.axis, controls.scale])
+  useEffect(() => { renderer.current?.setControls(controls) }, [controls])
   if (failed) return fallback
-  return <div ref={host} className="pixi-bloom-host" aria-label="WebGL dissolving blooms artwork" />
+  return <div ref={host} className="pixi-bloom-host" role="img" aria-label="Dissolving blooms: animated translucent contours shaped by incoming data" />
 }

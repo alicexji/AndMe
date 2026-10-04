@@ -1,210 +1,207 @@
-import { Application, Filter, Graphics, Particle, ParticleContainer, Rectangle, Texture, Ticker } from 'pixi.js'
-import { BloomSimulation } from './BloomSimulation'
-import { BLOOM_STRIDE } from './protocol'
+import { Application, Buffer, BufferUsage, Geometry, GlProgram, Mesh, Shader, Ticker, UniformGroup } from 'pixi.js'
+import { BloomSimulation, DEPARTURE_MS } from './BloomSimulation'
+import { BLOOM_STRIDE, type BloomFeatures } from './protocol'
+import { bloomFragment, bloomVertex } from './BloomShader'
 
-const COLORS = [0xff4a22, 0x1646d8, 0xf4cd24, 0xd84967, 0x58db8b, 0xf3f0e7]
-const MAX_SATELLITES = 10
+const COLORS = [0xf37852, 0x558bdf, 0xecc777, 0xd981a1, 0x77c4b0, 0xe9e3d4].map(color => [(color >> 16) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255])
 const FIXED_STEP = 1 / 30
+const INSTANCE_STRIDE = 12
+// 180 live blooms plus a bounded tail of retiring blooms, not a hidden particle pool.
+const MAX_INSTANCES = 360
 const smoothstep = (start: number, end: number, value: number) => {
-  const normalized = Math.max(0, Math.min(1, (value - start) / Math.max(.0001, end - start)))
-  return normalized * normalized * (3 - 2 * normalized)
+  const x = Math.max(0, Math.min(1, (value - start) / (end - start)))
+  return x * x * (3 - 2 * x)
 }
-
-export interface BloomRendererControls {
-  lifetime: number
-  density: number
-  intensity: number
-  complexity: number
-  motion: number
-}
+export interface BloomRendererControls { lifetime: number; density: number; intensity: number; complexity: number; motion: number }
 
 export class PixiBloomRenderer {
   private app = new Application()
   private simulation = new BloomSimulation()
-  private cores = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, color: true } })
-  private rings = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, rotation: true, color: true } })
-  private satellites = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, color: true } })
-  private coreParticles: Particle[] = []
-  private ringParticles: Particle[] = []
-  private satelliteParticles: Particle[] = []
-  private diskTexture: Texture | null = null
-  private ringTexture: Texture | null = null
   private controls: BloomRendererControls = { lifetime: 16, density: 82, intensity: 82, complexity: 78, motion: 65 }
+  private features: BloomFeatures = { data: new Float32Array(), keys: [] }
+  private instanceData = new Float32Array(MAX_INSTANCES * INSTANCE_STRIDE)
+  private buffer: Buffer | null = null
+  private geometry: Geometry | null = null
+  private shader: Shader | null = null
+  private mesh: Mesh<Geometry, Shader> | null = null
+  private uniforms = new UniformGroup({ uTime: { value: 0, type: 'f32' }, uComplexity: { value: .78, type: 'f32' } })
   private accumulator = 0
-  private elapsed = 0
-  private failures = 0
+  private flowTime = 0
+  private sample = new Float32Array(4)
   private destroyed = false
   private initialized = false
-  private sample = new Float32Array(4)
+  private failures = 0
+  private visible = true
+  private resizeObserver: ResizeObserver | null = null
+  private intersectionObserver: IntersectionObserver | null = null
   private performanceElement: HTMLDivElement | null = null
-  private statsStarted = performance.now()
-  private statsFrames = 0
-  private averageFrameCost = 0
-  private visibleObjects = 0
+  private frameIntervals: number[] = []
+  private frameWork = 0
+  private lastFrame = 0
+  private statsStarted = 0
 
   constructor(private host: HTMLElement, private onFailure: (error: Error) => void) {}
 
   async init() {
     try {
-      await this.app.init({
-        preference: 'webgl', powerPreference: 'high-performance', resizeTo: this.host,
-        background: 0x11110f, antialias: true, autoDensity: true,
-        resolution: Math.min(window.devicePixelRatio, 2), autoStart: false, sharedTicker: false,
-      })
-      if (this.destroyed) { this.app.destroy(true); return }
+      await this.app.init({ preference: 'webgl', preferWebGLVersion: 2, powerPreference: 'high-performance', background: 0x11110f,
+        antialias: false, autoDensity: true, resolution: Math.min(window.devicePixelRatio || 1, 2), autoStart: false, sharedTicker: false })
+      if (this.destroyed) { this.app.destroy(true, { children: true }); return }
+      this.initialized = true
       this.host.replaceChildren(this.app.canvas)
       this.app.canvas.className = 'pixi-bloom-canvas'
+      this.buffer = new Buffer({ data: this.instanceData, usage: BufferUsage.VERTEX | BufferUsage.COPY_DST, shrinkToFit: false })
+      this.geometry = new Geometry({
+        attributes: {
+          aPosition: { buffer: new Float32Array([-1,-1, 1,-1, 1,1, -1,1]), format: 'float32x2' },
+          aBloom: { buffer: this.buffer, format: 'float32x4', stride: 48, offset: 0, instance: true },
+          aColor: { buffer: this.buffer, format: 'float32x4', stride: 48, offset: 16, instance: true },
+          aShape: { buffer: this.buffer, format: 'float32x4', stride: 48, offset: 32, instance: true },
+        },
+        indexBuffer: new Uint16Array([0,1,2, 0,2,3]), instanceCount: 0,
+      })
+      this.shader = new Shader({ glProgram: new GlProgram({ vertex: bloomVertex, fragment: bloomFragment, name: 'dissolving-bloom', preferredFragmentPrecision: 'highp' }), resources: { bloomUniforms: this.uniforms } })
+      this.mesh = new Mesh({ geometry: this.geometry, shader: this.shader })
+      this.mesh.blendMode = 'screen'
+      this.app.stage.addChild(this.mesh)
       if (import.meta.env.DEV || new URLSearchParams(window.location.search).has('perf')) {
         this.performanceElement = document.createElement('div')
         this.performanceElement.className = 'pixi-performance'
         this.host.appendChild(this.performanceElement)
       }
-      const disk = new Graphics().circle(16, 16, 14).fill(0xffffff)
-      const ring = new Graphics().circle(18, 18, 14).stroke({ color: 0xffffff, width: 2 })
-      this.diskTexture = this.app.renderer.generateTexture({ target: disk, resolution: 4, antialias: true })
-      this.ringTexture = this.app.renderer.generateTexture({ target: ring, resolution: 4, antialias: true })
-      disk.destroy(); ring.destroy()
-      this.app.stage.addChild(this.rings, this.cores, this.satellites)
-      this.resizeBounds()
-      this.app.renderer.on('resize', this.resizeBounds, this)
-      this.app.canvas.addEventListener('webglcontextlost', this.contextLost)
+      // Own the render call so the timing includes CPU-side WebGL submission.
+      this.app.ticker.remove(this.app.render, this.app)
       this.app.ticker.add(this.tick)
-      this.initialized = true
-      this.syncParticlePool()
-      this.app.start()
-    } catch (error) {
-      this.fail(error)
-    }
+      this.app.canvas.addEventListener('webglcontextlost', this.contextLost)
+      this.resizeObserver = new ResizeObserver(this.resize)
+      this.resizeObserver.observe(this.host)
+      this.intersectionObserver = new IntersectionObserver(([entry]) => { this.visible = entry.isIntersecting; this.syncPlayback() })
+      this.intersectionObserver.observe(this.host)
+      document.addEventListener('visibilitychange', this.syncPlayback)
+      this.resize()
+      this.syncPlayback()
+    } catch (error) { this.fail(error) }
   }
 
-  setFeatures(features: Float32Array) {
-    if (features.some(value => !Number.isFinite(value))) {
-      this.fail(new Error('Bloom feature buffer contained invalid numeric data.'), false)
-      return
+  setFeatures(features: BloomFeatures) {
+    if (this.destroyed) return
+    if (features.data.length !== features.keys.length * BLOOM_STRIDE || features.data.some(value => !Number.isFinite(value))) {
+      this.fail(new Error('Invalid bloom feature buffer')); return
     }
-    this.simulation.setFeatures(features)
-    if (this.initialized) this.syncParticlePool()
+    this.features = features
+    this.reconcile()
   }
 
   setControls(controls: BloomRendererControls) {
-    this.controls = {
-      lifetime: Math.max(1, controls.lifetime), density: Math.max(0, Math.min(100, controls.density)),
-      intensity: Math.max(0, Math.min(100, controls.intensity)), complexity: Math.max(0, Math.min(100, controls.complexity)),
-      motion: Math.max(0, Math.min(100, controls.motion)),
-    }
+    this.controls = { lifetime: Math.max(1, controls.lifetime), density: Math.max(0, Math.min(100, controls.density)), intensity: Math.max(0, Math.min(100, controls.intensity)), complexity: Math.max(0, Math.min(100, controls.complexity)), motion: Math.max(0, Math.min(100, controls.motion)) }
+    this.reconcile()
   }
 
-  // Future GLSL/WGSL effects can be attached without changing simulation or React code.
-  setPostProcessFilters(filters: Filter[]) {
-    this.app.stage.filters = filters
+  private reconcile() {
+    this.simulation.reconcile(this.features, Math.floor(30 + this.controls.density * 1.5), performance.now(), this.controls.lifetime)
   }
 
-  private resizeBounds = () => {
+  private resize = () => {
+    if (!this.initialized || this.destroyed) return
     const width = Math.max(1, this.host.clientWidth), height = Math.max(1, this.host.clientHeight)
+    this.app.renderer.resize(width, height)
     this.simulation.setSize(width, height)
-    const bounds = new Rectangle(0, 0, width, height)
-    this.cores.boundsArea = bounds; this.rings.boundsArea = bounds; this.satellites.boundsArea = bounds
   }
 
-  private syncParticlePool() {
-    if (!this.diskTexture || !this.ringTexture) return
-    while (this.coreParticles.length < this.simulation.count) {
-      const core = new Particle({ texture: this.diskTexture, anchorX: .5, anchorY: .5, alpha: 0 })
-      const ring = new Particle({ texture: this.ringTexture, anchorX: .5, anchorY: .5, alpha: 0 })
-      this.coreParticles.push(core); this.ringParticles.push(ring)
-      this.cores.addParticle(core); this.rings.addParticle(ring)
-      for (let index = 0; index < MAX_SATELLITES; index++) {
-        const satellite = new Particle({ texture: this.diskTexture, anchorX: .5, anchorY: .5, alpha: 0 })
-        this.satelliteParticles.push(satellite); this.satellites.addParticle(satellite)
-      }
-    }
-    for (let index = this.simulation.count; index < this.coreParticles.length; index++) {
-      this.coreParticles[index].alpha = 0; this.ringParticles[index].alpha = 0
-      for (let satellite = 0; satellite < MAX_SATELLITES; satellite++) this.satelliteParticles[index * MAX_SATELLITES + satellite].alpha = 0
-    }
+  private syncPlayback = () => {
+    if (!this.initialized || this.destroyed) return
+    if (this.visible && !document.hidden) {
+      this.lastFrame = 0; this.accumulator = 0; this.frameIntervals.length = 0; this.statsStarted = performance.now()
+      this.simulation.prune(performance.now(), this.controls.lifetime)
+      this.app.start()
+    } else this.app.stop()
   }
 
   private tick = (ticker: Ticker) => {
+    if (this.destroyed) return
     const started = performance.now()
     try {
-      const frameSeconds = Math.min(.1, ticker.deltaMS / 1000)
-      this.accumulator += frameSeconds
+      const dt = Math.min(.1, ticker.deltaMS / 1000)
+      this.simulation.prune(started, this.controls.lifetime)
+      this.flowTime += dt * this.controls.motion / 65
+      this.accumulator += dt
       while (this.accumulator >= FIXED_STEP) {
-        this.elapsed += FIXED_STEP
-        this.simulation.update(FIXED_STEP, this.elapsed, this.controls.motion / 50)
+        this.simulation.update(FIXED_STEP, this.controls.motion / 50)
         this.accumulator -= FIXED_STEP
       }
-      this.render(this.accumulator / FIXED_STEP, performance.now())
+      this.render(this.accumulator / FIXED_STEP, started)
+      this.app.render()
       this.failures = 0
-    } catch (error) {
-      // Contain individual bad frames. Pixi's ticker remains alive and retries next frame.
-      this.failures++
-      if (this.failures === 3) this.fail(error, false)
-    } finally {
-      const finished = performance.now()
-      this.averageFrameCost = this.averageFrameCost * .92 + (finished - started) * .08
-      this.statsFrames++
-      if (this.performanceElement && finished - this.statsStarted >= 500) {
-        const fps = this.statsFrames * 1000 / (finished - this.statsStarted)
-        const resolution = this.app.renderer.resolution
-        this.performanceElement.textContent = `${fps.toFixed(0)} FPS  ·  ${this.averageFrameCost.toFixed(2)} MS JS  ·  ${this.visibleObjects} OBJECTS  ·  ${resolution.toFixed(2)}× DPR  ·  ${this.app.canvas.width}×${this.app.canvas.height}`
-        this.statsFrames = 0; this.statsStarted = finished
+      const work = performance.now() - started
+      this.frameWork = this.frameWork * .9 + work * .1
+      if (this.lastFrame) this.frameIntervals.push(started - this.lastFrame)
+      this.lastFrame = started
+      if (started - this.statsStarted >= 1000) {
+        if (this.performanceElement && this.frameIntervals.length) {
+          const sorted = [...this.frameIntervals].sort((a,b) => a-b)
+          const mean = sorted.reduce((sum,value) => sum+value,0) / sorted.length
+          const p95 = sorted[Math.min(sorted.length-1, Math.floor(sorted.length*.95))]
+          this.performanceElement.textContent = `${(1000/mean).toFixed(0)} FPS / ${p95.toFixed(1)} MS P95 / ${this.frameWork.toFixed(2)} MS CPU+SUBMIT / ${this.geometry!.instanceCount} BLOOMS / ${this.app.renderer.resolution.toFixed(1)}x DPR`
+        }
+        this.frameIntervals.length = 0; this.statsStarted = started
       }
+    } catch (error) {
+      if (++this.failures >= 3) this.fail(error)
     }
   }
 
   private render(interpolation: number, now: number) {
-    const count = this.simulation.count, data = this.simulation.features
-    const visibleCount = Math.min(count, Math.floor(30 + this.controls.density * 1.5)), firstVisible = count - visibleCount
-    let visibleObjects = 0
-    for (let index = 0; index < count; index++) {
-      const feature = index * BLOOM_STRIDE, core = this.coreParticles[index], ring = this.ringParticles[index]
-      if (index < firstVisible) {
-        core.alpha = 0; ring.alpha = 0
-        for (let satellite = 0; satellite < MAX_SATELLITES; satellite++) this.satelliteParticles[index * MAX_SATELLITES + satellite].alpha = 0
-        continue
-      }
-      const age = Math.max(0, (now - data[feature + 6]) / (this.controls.lifetime * 1000))
-      // Long, zero-velocity fade curves avoid visible pops at either endpoint.
-      const life = age < 1 ? smoothstep(0, .12, age) * (1 - smoothstep(.68, 1, age)) : 0
-      this.simulation.sampleInto(index, interpolation, this.sample)
-      const x = this.sample[0], y = this.sample[1], phase = this.sample[2], normalized = this.sample[3], size = 18 + normalized * 105
-      const alpha = life * (.18 + this.controls.intensity / 145), color = COLORS[Math.floor(data[feature + 5]) % COLORS.length]
-      core.x = x; core.y = y; core.scaleX = core.scaleY = size / 14; core.alpha = alpha * .32; core.tint = color
-      ring.x = x; ring.y = y; ring.scaleX = ring.scaleY = size * (1.05 + life * .45) / 14; ring.rotation = phase; ring.alpha = alpha; ring.tint = color
-      const satellites = Math.min(MAX_SATELLITES, Math.floor(data[feature + 7] * (.4 + this.controls.complexity / 100)))
-      if (life > 0) visibleObjects += 2 + satellites
-      for (let satelliteIndex = 0; satelliteIndex < MAX_SATELLITES; satelliteIndex++) {
-        const satellite = this.satelliteParticles[index * MAX_SATELLITES + satelliteIndex]
-        if (satelliteIndex >= satellites || life === 0) { satellite.alpha = 0; continue }
-        const angle = phase + satelliteIndex * Math.PI * 2 / satellites
-        const orbit = size * (1.15 + data[feature + 3] * .65)
-        satellite.x = x + Math.cos(angle) * orbit; satellite.y = y + Math.sin(angle) * orbit
-        satellite.scaleX = satellite.scaleY = (.12 + data[feature + 3] * .25); satellite.alpha = alpha * .7; satellite.tint = COLORS[(Math.floor(data[feature + 5]) + satelliteIndex) % COLORS.length]
-      }
+    if (!this.mesh || !this.geometry || !this.buffer) return
+    let visible = 0
+    for (const state of this.simulation.states.values()) {
+      const data = state.features
+      const age = Math.max(0, (now - data[6]) / (this.controls.lifetime * 1000))
+      const life = smoothstep(0, .1, age) * (1 - smoothstep(.65, 1, age))
+      const departure = state.departure === null ? 1 : 1 - smoothstep(0, DEPARTURE_MS, now - state.departure)
+      const opacity = life * departure * (.25 + this.controls.intensity / 145)
+      if (opacity < .001) continue
+      this.simulation.sampleInto(state, interpolation, this.sample)
+      const [x,y,phase,normalized] = this.sample
+      const radius = (22 + normalized * 80) * (.88 + .12 * Math.sin(age * Math.PI))
+      const extent = radius * 1.3
+      if (x + extent < 0 || y + extent < 0 || x - extent > this.simulation.width || y - extent > this.simulation.height) continue
+      if (visible >= MAX_INSTANCES) break
+      const color = COLORS[Math.floor(data[5]) % COLORS.length], offset = visible * INSTANCE_STRIDE
+      this.instanceData[offset] = x; this.instanceData[offset+1] = y; this.instanceData[offset+2] = radius; this.instanceData[offset+3] = 0
+      this.instanceData[offset+4] = color[0]; this.instanceData[offset+5] = color[1]; this.instanceData[offset+6] = color[2]; this.instanceData[offset+7] = opacity
+      this.instanceData[offset+8] = data[4]; this.instanceData[offset+9] = age; this.instanceData[offset+10] = phase; this.instanceData[offset+11] = data[3]
+      visible++
     }
-    this.visibleObjects = visibleObjects
+    // Only live, on-screen instances are uploaded and drawn. Capacity is just reusable bytes.
+    this.geometry.instanceCount = visible
+    this.mesh.visible = visible > 0
+    if (visible) this.buffer.update(visible * INSTANCE_STRIDE * 4)
+    this.uniforms.uniforms.uTime = this.flowTime
+    this.uniforms.uniforms.uComplexity = this.controls.complexity / 100
+    this.uniforms.update()
   }
 
-  private contextLost = (event: Event) => {
-    event.preventDefault()
-    this.fail(new Error('The WebGL context was lost. Falling back to Canvas 2D.'))
-  }
-
-  private fail(error: unknown, fatal = true) {
+  private contextLost = (event: Event) => { event.preventDefault(); this.fail(new Error('WebGL context lost; using Canvas fallback.')) }
+  private fail(error: unknown) {
+    if (this.destroyed) return
+    this.app.stop?.()
     const resolved = error instanceof Error ? error : new Error(String(error))
     console.error('[PixiBloomRenderer]', resolved)
-    if (fatal) this.onFailure(resolved)
+    this.onFailure(resolved)
   }
 
   destroy() {
+    if (this.destroyed) return
     this.destroyed = true
+    this.resizeObserver?.disconnect(); this.intersectionObserver?.disconnect()
+    document.removeEventListener('visibilitychange', this.syncPlayback)
+    this.simulation.states.clear()
     if (!this.initialized) return
     this.app.canvas.removeEventListener('webglcontextlost', this.contextLost)
-    this.app.renderer.off('resize', this.resizeBounds, this)
-    this.app.ticker.remove(this.tick)
-    this.performanceElement?.remove(); this.performanceElement = null
-    this.app.destroy(true, { children: true, texture: true })
+    this.performanceElement?.remove()
+    this.app.destroy(true, { children: true })
+    this.geometry?.destroy(true)
+    this.shader?.destroy(true)
     this.initialized = false
   }
 }
