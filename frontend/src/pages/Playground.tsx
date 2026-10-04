@@ -28,7 +28,7 @@ const modes:{id:ArtMode;name:string;description:string}[]=[
   {id:'matrix',name:'Constructive matrix',description:'A shifting grammar of cells, crosses, arcs and cuts.'},
   {id:'particles',name:'Particle weather',description:'Records become charged matter in a turbulent field.'},
   {id:'signals',name:'Signal strata',description:'Layered traces accumulate like an unstable landscape.'},
-  {id:'notation',name:'Living notation',description:'Data becomes a score of ligatures, rests, dots and gestures.'},
+  {id:'notation',name:'Living notation',description:'Colored metric dots, sheer vertical color fields, and persistent arched connections.'},
   {id:'currents',name:'Segmented currents',description:'Colored fragments bend together through a shared field.'},
   {id:'ledger',name:'Chromatic ledger',description:'A hand-marked atlas of cells, rings and categorical strokes.'},
 ]

@@ -92,3 +92,33 @@ test('wave origins stay on the dot lattice across responsive sizes', () => {
     assert.ok(position >= 0 && position <= extent)
   }
 })
+
+const { scoreY, composeScore } = await import(moduleURL(new URL('../src/rendering/NotationScore.ts', import.meta.url)))
+test('notation maps metric endpoints to the bottom and top staff lines', () => {
+  assert.ok(Math.abs(scoreY(0, 0) - (88 + 640 / 3 * .4)) < 1e-9)
+  assert.equal(scoreY(0, 1), 88)
+  assert.ok(Math.abs(scoreY(1, .5) - 344) < 1e-9)
+  assert.equal(scoreY(0, -1), scoreY(0, 0))
+})
+test('notation composition handles no data and respects finite batch capacity', () => {
+  const buffer = new Float32Array(12 * 20)
+  assert.equal(composeScore([], 0, 78, buffer), 0)
+  const nodes = Array.from({length:15},(_,i)=>({key:String(i),x:30+i*50,staff:i%3,value:i/15,secondary:.6,opacity:.7,color:[.2,.4,.8]}))
+  const count = composeScore(nodes, 3.5, 78, buffer)
+  assert.ok(count > 0 && count <= 20)
+  assert.ok(buffer.every(Number.isFinite))
+})
+
+test('falling notation nodes survive source removal and exit below the canvas', () => {
+  const buffer = new Float32Array(12000)
+  const node = {key:'fixed',x:200,staff:0,value:.5,secondary:.5,opacity:1,color:[0,0,0]}
+  composeScore([node], 0, 50, buffer, 800, 800)
+  assert.equal(composeScore([], .8, 50, buffer, 800, 800), 1)
+  assert.equal(buffer[7], 1)
+  const before = buffer[1]
+  composeScore([], .801, 50, buffer, 800, 800)
+  assert.ok(Math.abs(buffer[1] - before) < 2)
+  assert.equal(composeScore([], 2.09, 50, buffer, 800, 800), 1)
+  assert.ok(buffer[1] > 800)
+  assert.equal(composeScore([], 2.11, 50, buffer, 800, 800), 0)
+})

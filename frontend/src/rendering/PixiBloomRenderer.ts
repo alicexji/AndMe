@@ -3,6 +3,7 @@ import { BloomSimulation, DEPARTURE_MS } from './BloomSimulation'
 import { BLOOM_STRIDE, type BloomFeatures } from './protocol'
 import { bloomFragment, bloomVertex } from './BloomShader'
 import { GRID_SPACING, gridAnchor } from './BloomGrid'
+import { composeScore, STAFF_COUNT, type ScoreNode, notationVertex, notationFragment } from './NotationScore'
 import { isPaper, isStrip, presetVertex, presetFragment, presetGeometry, type PresetMode } from './PresetShaders'
 
 
@@ -23,6 +24,7 @@ export class PixiBloomRenderer {
   private controls: BloomRendererControls = { lifetime: 16, density: 82, intensity: 82, complexity: 78, motion: 65 }
   private features: BloomFeatures = { data: new Float32Array(), keys: [] }
   private instanceData: Float32Array
+  private scoreNodes: ScoreNode[] = []
   private buffer: Buffer | null = null
   private geometry: Geometry | null = null
   private shader: Shader | null = null
@@ -45,7 +47,7 @@ export class PixiBloomRenderer {
   private statsStarted = 0
 
   constructor(private host: HTMLElement, private onFailure: (error: Error) => void, private mode: PresetMode = 'bloom') {
-    const capacity = mode === 'particles' ? MAX_INSTANCES : isStrip(mode) ? 360 * 3 : 360
+    const capacity = mode === 'particles' || mode === 'notation' ? MAX_INSTANCES : isStrip(mode) ? 360 * 3 : 360
     this.instanceData = new Float32Array(capacity * INSTANCE_STRIDE)
   }
 
@@ -75,7 +77,7 @@ export class PixiBloomRenderer {
         },
         indexBuffer: shape.indices, instanceCount: 0,
       })
-      this.shader = new Shader({ glProgram: new GlProgram({ vertex: this.mode === 'bloom' ? bloomVertex : presetVertex(this.mode), fragment: this.mode === 'bloom' ? bloomFragment : presetFragment(this.mode), name: `art-${this.mode}`, preferredFragmentPrecision: 'highp' }), resources: { bloomUniforms: this.uniforms } })
+      this.shader = new Shader({ glProgram: new GlProgram({ vertex: this.mode === 'bloom' ? bloomVertex : this.mode === 'notation' ? notationVertex : presetVertex(this.mode), fragment: this.mode === 'bloom' ? bloomFragment : this.mode === 'notation' ? notationFragment : presetFragment(this.mode), name: `art-${this.mode}`, preferredFragmentPrecision: 'highp' }), resources: { bloomUniforms: this.uniforms } })
       this.mesh = new Mesh({ geometry: this.geometry, shader: this.shader })
       this.mesh.blendMode = this.mode === 'bloom' || this.mode === 'particles' ? 'screen' : 'normal'
       this.app.stage.addChild(this.mesh)
@@ -169,6 +171,7 @@ export class PixiBloomRenderer {
   private render(interpolation: number, now: number) {
     if (!this.mesh || !this.geometry || !this.buffer) return
     let visible = 0
+    this.scoreNodes.length = 0
     for (const state of this.simulation.states.values()) {
       const data = state.features
       const age = Math.max(0, (now - data[6]) / (this.controls.lifetime * 1000))
@@ -178,6 +181,11 @@ export class PixiBloomRenderer {
       if (opacity < .001) continue
       this.simulation.sampleInto(state, interpolation, this.sample)
       const [, , phase, normalized] = this.sample
+      if (this.mode === 'notation') {
+        const staffs = STAFF_COUNT
+        this.scoreNodes.push({key:state.key,x:28+data[0]*(this.simulation.width-56),staff:Math.min(staffs-1,Math.floor(data[1]*staffs)),value:normalized,secondary:data[3],opacity,color:PALETTE[Math.floor(data[5])%PALETTE.length]})
+        continue
+      }
       if (this.mode !== 'bloom') {
         visible = this.writePreset(data, this.sample, age, opacity, visible)
         continue
@@ -194,6 +202,7 @@ export class PixiBloomRenderer {
       this.instanceData[offset+8] = data[4]; this.instanceData[offset+9] = age; this.instanceData[offset+10] = phase; this.instanceData[offset+11] = data[3]
       visible++
     }
+    if (this.mode === 'notation') visible = composeScore(this.scoreNodes,this.flowTime,this.controls.complexity,this.instanceData,this.simulation.width,this.simulation.height)
     // Broad overlapping fields are fill-rate limited. Keep the CSS dot lattice at
     // native resolution while limiting shader pixels for crowded scenes.
     const nativeResolution = Math.min(window.devicePixelRatio || 1, 2)
