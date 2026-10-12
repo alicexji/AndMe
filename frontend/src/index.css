@@ -92,3 +92,34 @@ button,a { -webkit-tap-highlight-color:transparent; }
 
 /* Continuous metric lines, aligned with NotationScore's 24px grid. */
 .preset-notation::after{inset:64px 20px 72px;background-image:linear-gradient(to bottom,#26323b 0 1px,transparent 1px);background-size:100% 24px;background-repeat:repeat-y;opacity:.21}
+
+/* The feed and controls share one frame with the artwork. */
+.instrument-tabs{display:flex;position:sticky;top:0;z-index:3;background:#181816;border-bottom:1px solid #484842}
+.instrument-tabs button{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border:0;border-bottom:2px solid transparent;background:transparent;color:#aaa;font:10px monospace;cursor:pointer}
+.instrument-tabs button[aria-selected=true]{color:var(--paper);border-bottom-color:var(--signal);background:#242421}
+.instrument-tabs svg{width:15px;height:15px}.instrument-tabs button:focus-visible,.stage-fullscreen:focus-visible{outline:2px solid var(--signal);outline-offset:-3px}
+.instrument-panel [hidden]{display:none}
+.instrument-panel .sidebar-tape{padding:18px 16px;background:transparent;color:var(--paper);border:0}
+.sidebar-tape .tape-heading{display:grid;gap:12px;font-size:9px;line-height:1.6;padding:0 0 16px}
+.sidebar-tape .tape-grid{display:block}.sidebar-tape .raw-current{padding:16px 0;border:0;border-top:1px solid #484842}
+.sidebar-tape .raw-current pre{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto}
+.sidebar-tape .event-history{border-top:1px solid #484842}.sidebar-tape .event-history article{display:grid;grid-template-columns:36px 1fr;gap:8px;padding:14px 0}
+.sidebar-tape .event-history article strong{overflow-wrap:anywhere}.sidebar-tape .event-history article b,.sidebar-tape .event-history article small{grid-column:2}
+.sidebar-tape footer{display:grid;gap:12px;padding-top:20px;line-height:1.6}.sidebar-tape footer span{flex-wrap:wrap}.sidebar-tape .tape-error{padding:16px 0;overflow-wrap:anywhere}
+.stage-fullscreen{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;background:transparent;color:var(--paper);border:1px solid #777;padding:5px;cursor:pointer}.stage-fullscreen svg{width:16px;height:16px}
+.art-stage:fullscreen{width:100vw;height:100dvh;min-height:0;background:#11110f}.art-stage:fullscreen::backdrop{background:#11110f}
+.fullscreen-error{position:absolute;top:50px;right:12px;z-index:5;background:#181816;color:var(--paper);padding:12px;font:12px monospace}
+
+.sidebar-tape .tape-heading{height:auto;border-bottom-color:#484842}.sidebar-tape .tape-heading>div:last-child{display:block}
+.sidebar-tape .event-history article{opacity:.75;border-bottom-color:#484842}.sidebar-tape .event-history article.current{background:#292923;color:var(--paper);opacity:1}
+.sidebar-tape .event-history article strong{white-space:normal}.sidebar-tape .event-history article b{color:#83b8ff}.sidebar-tape .event-history article small{text-align:left;display:block}
+.sidebar-tape.data-tape>footer{display:grid}.sidebar-tape .tape-error{font-size:15px;min-height:160px;flex-wrap:wrap}.sidebar-tape .tape-error button{color:inherit;border-color:#777}
+
+/* Immersive viewing: reveal the retractable toolbar on pointer activity. */
+.art-stage:fullscreen .stage-caption{display:none}
+.art-stage:fullscreen .stage-meta{transform:translateY(-100%);opacity:0;pointer-events:none;transition:transform .2s ease,opacity .2s ease}
+.art-stage:fullscreen.fullscreen-tools-visible .stage-meta,.art-stage:fullscreen .stage-meta:has(:focus-visible){transform:translateY(0);opacity:1;pointer-events:auto}
+.art-stage:fullscreen{cursor:auto}
+.art-stage:fullscreen .pixi-performance{display:none}
+.art-stage:fullscreen .stage-meta button{cursor:pointer}
+@media(prefers-reduced-motion:reduce){.art-stage:fullscreen .stage-meta{transition:none}}

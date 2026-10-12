@@ -1,9 +1,10 @@
-import { Activity, CloudSun, Database, Gauge, Globe2, Pause, Play, RefreshCw, SlidersHorizontal } from 'lucide-react'
+import { loadCurrencies, loadBiodiversity } from '../rendering/OpenDatasets'
+import { Activity, TrendingUp, Leaf, Maximize2, Minimize2, CloudSun, Database, Gauge, Globe2, Pause, Play, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const PixiBloomCanvas = lazy(() => import('../components/PixiBloomCanvas'))
 
-type DatasetId = 'earthquakes' | 'population' | 'weather'
+type DatasetId = 'earthquakes' | 'population' | 'weather' | 'currencies' | 'biodiversity'
 type ArtMode = 'bloom' | 'matrix' | 'particles' | 'signals' | 'notation' | 'currents' | 'ledger'
 type ScaleMode = 'linear' | 'log' | 'rank'
 type RawRecord = Record<string, unknown>
@@ -22,6 +23,12 @@ const datasets: Dataset[] = [
   { id:'weather',name:'Atmosphere now',topic:'CLIMATE / LIVE',description:'Current conditions along a transect of world cities.',source:'Open-Meteo',sourceUrl:'https://open-meteo.com/en/docs',unit:'°C',live:true,icon:CloudSun,
     load:async()=>{const cities:[string,number,number][]=[['New York',40.71,-74.01],['Mexico City',19.43,-99.13],['São Paulo',-23.55,-46.63],['London',51.51,-.13],['Lagos',6.52,3.38],['Cairo',30.04,31.24],['Mumbai',19.08,72.88],['Tokyo',35.68,139.69],['Sydney',-33.87,151.21],['Reykjavík',64.15,-21.94],['Singapore',1.35,103.82],['Cape Town',-33.92,18.42]];return Promise.all(cities.map(async c=>{const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${c[1]}&longitude=${c[2]}&current=temperature_2m,wind_speed_10m`);if(!r.ok)throw new Error(`Open-Meteo returned ${r.status}`);const j=await r.json();return{city:c[0],temperature:j.current.temperature_2m,wind:j.current.wind_speed_10m,observed:j.current.time}}))},
     transform:(r,i)=>({id:`weather-${r.city}-${i}`,label:String(r.city),value:number(r.temperature),secondary:number(r.wind),time:Date.parse(String(r.observed)),raw:r}) },
+
+  {id:'currencies',name:'Currency currents',topic:'FINANCE / HISTORICAL',description:'A full year of daily USD exchange rates against EUR, GBP, JPY, CAD and AUD. Daily percentage change drives the artwork; the exchange rate is the secondary field. Historical records replay in a loop.',source:'Frankfurter / European Central Bank',sourceUrl:'https://frankfurter.dev/v1/',unit:'% CHANGE',live:false,icon:TrendingUp,load:loadCurrencies,
+    transform:r=>({id:`fx-${r.pair}-${r.date}`,label:`${r.pair} / ${r.date}`,value:number(r.changePercent),secondary:number(r.rate),time:Date.parse(String(r.date)),raw:r})},
+  {id:'biodiversity',name:'Life on Earth',topic:'BIODIVERSITY / ARCHIVE',description:'300 geolocated observations from GBIF?s large CC0 biodiversity archive. Distance from the equator drives the artwork; longitude is the secondary field. A bounded archive sample, replayed in a loop.',source:'Global Biodiversity Information Facility / CC0 records',sourceUrl:'https://www.gbif.org/occurrence/search?license=CC0_1_0',unit:'DEG LAT',live:false,icon:Leaf,load:loadBiodiversity,
+    transform:r=>({id:`gbif-${r.key}`,label:`${r.species} / ${r.country}`,value:Math.abs(number(r.latitude)),secondary:number(r.longitude),time:Date.parse(String(r.observed||''))||(r.year?Date.UTC(number(r.year),0,1):0),raw:r})},
+
 ]
 const modes:{id:ArtMode;name:string;description:string}[]=[
   {id:'bloom',name:'Dissolving blooms',description:'Blue wavefronts radiate from a survey grid through shifting fields of color.'},
@@ -71,24 +78,55 @@ function DataArtCanvas({events,mode,controls}:{events:Datum[];mode:ArtMode;contr
 export default function Playground(){
   const [selected,setSelected]=useState<DatasetId>('earthquakes'),[mode,setMode]=useState<ArtMode>('bloom'),[raw,setRaw]=useState<RawRecord[]>([]),[events,setEvents]=useState<Datum[]>([]),[cursor,setCursor]=useState(0),[running,setRunning]=useState(true),[loading,setLoading]=useState(false),[error,setError]=useState('')
   const [controls,setControls]=useState<Controls>({rate:7,lifetime:16,density:82,intensity:82,complexity:78,motion:65,scale:'linear',axis:'value'}),timer=useRef<number|undefined>(undefined),dataset=datasets.find(d=>d.id===selected)!
+  const [panelTab,setPanelTab]=useState<'controls'|'feed'>('controls')
+  const [fullscreen,setFullscreen]=useState(false),[fullscreenError,setFullscreenError]=useState('')
+  const stageRef=useRef<HTMLDivElement>(null)
+  const [fullscreenTools,setFullscreenTools]=useState(false)
+  const toolsTimer=useRef<number|undefined>(undefined)
+  const revealFullscreenTools=()=>{
+    setFullscreenTools(true)
+    window.clearTimeout(toolsTimer.current)
+    toolsTimer.current=window.setTimeout(()=>setFullscreenTools(false),3000)
+  }
+  useEffect(()=>()=>window.clearTimeout(toolsTimer.current),[])
+  useEffect(()=>{
+    const sync=()=>{
+      setFullscreen(document.fullscreenElement===stageRef.current)
+      setFullscreenTools(false)
+      window.clearTimeout(toolsTimer.current)
+    }
+    document.addEventListener('fullscreenchange',sync)
+    return()=>document.removeEventListener('fullscreenchange',sync)
+  },[])
+  const toggleFullscreen=async()=>{
+    setFullscreenError('')
+    try {
+      if(document.fullscreenElement===stageRef.current) await document.exitFullscreen()
+      else if(stageRef.current?.requestFullscreen) await stageRef.current.requestFullscreen()
+      else setFullscreenError('Fullscreen is unavailable in this browser.')
+    } catch { setFullscreenError('Unable to open fullscreen. Please try again.') }
+  }
+  const connectionVersion=useRef(0)
   const nextRecord = useRef(0)
   const reference = useMemo(() => raw.map((row, index) => { const event = dataset.transform(row, index); return { id: event.id, value: event.value, time: event.time } }), [raw, dataset])
-  const connect=useCallback(async()=>{setLoading(true);setError('');setRaw([]);setEvents([]);setCursor(0);nextRecord.current=0;try{setRaw(await dataset.load());setRunning(true)}catch(e){setError(e instanceof Error?e.message:'Source unavailable')}finally{setLoading(false)}},[dataset])
+  const connect=useCallback(async()=>{const version=++connectionVersion.current;setLoading(true);setError('');setRaw([]);setEvents([]);setCursor(0);nextRecord.current=0;try{const rows=await dataset.load();if(version!==connectionVersion.current)return;setRaw(rows);setRunning(true)}catch(e){if(version!==connectionVersion.current)return;setError(e instanceof Error?e.message:'Source unavailable')}finally{if(version===connectionVersion.current)setLoading(false)}},[dataset])
   useEffect(()=>{connect()},[connect]);useEffect(()=>{clearInterval(timer.current);if(!running||!raw.length)return;timer.current=window.setInterval(()=>{const next=nextRecord.current%raw.length,event=dataset.transform(raw[next],next),now=performance.now(),cutoff=now-controls.lifetime*1000;nextRecord.current++;setEvents(old=>[...old.filter(item=>item.born>cutoff).slice(-300),{...event,born:now}]);setCursor(nextRecord.current)},1000/controls.rate);return()=>clearInterval(timer.current)},[running,raw,dataset,controls.rate,controls.lifetime])
   useEffect(()=>{const expiry=window.setInterval(()=>{const cutoff=performance.now()-controls.lifetime*1000;setEvents(old=>{const live=old.filter(event=>event.born>cutoff);return live.length===old.length?old:live})},1000);return()=>window.clearInterval(expiry)},[controls.lifetime])
-  const current=raw.length?raw[(Math.max(0,cursor-1))%raw.length]:null,activeCount=events.length
+  const current=raw.length&&cursor>0?raw[(Math.max(0,cursor-1))%raw.length]:null,activeCount=events.length
   const setControl=<K extends keyof Controls>(key:K,value:Controls[K])=>setControls(c=>({...c,[key]:value}))
   return <div className="page-wrap playground-page"><header className="playground-title"><p className="section-code">OPEN DATA / GENERATIVE INSTRUMENT</p><h1>DATA<br/><em>PLAYGROUND</em></h1><p>Public APIs feed a living canvas. Every mark begins as a record.</p></header>
     <section className="playground-console">
-      <div className="art-stage"><div className="stage-meta"><span><i className={running?'live':''}/>{loading?'CONNECTING':error?'OFFLINE':running?'RECEIVING':'PAUSED'}</span><span>{activeCount.toString().padStart(3,'0')} ACTIVE MARKS / {controls.lifetime}s TTL</span><span>{dataset.unit} → {controls.axis.toUpperCase()}</span></div><Suspense fallback={<DataArtCanvas events={events} mode={mode} controls={controls}/>}><PixiBloomCanvas key={mode} mode={mode} events={events} reference={reference} controls={controls} fallback={<DataArtCanvas events={events} mode={mode} controls={controls}/>}/></Suspense><div className="stage-caption"><strong>{modes.find(m=>m.id===mode)?.name}</strong><span>{dataset.name} / {controls.scale} scale</span></div></div>
-      <aside className="instrument-panel"><div className="instrument-head"><span>INSTRUMENT / 01</span><SlidersHorizontal/></div>
+      <div className={`art-stage${fullscreenTools?' fullscreen-tools-visible':''}`} ref={stageRef} onPointerMove={()=>{if(fullscreen)revealFullscreenTools()}} onPointerDown={e=>{if(fullscreen&&e.pointerType==='touch')revealFullscreenTools()}}><div className="stage-meta"><span><i className={running?'live':''}/>{loading?'CONNECTING':error?'OFFLINE':running?'RECEIVING':'PAUSED'}</span><span>{activeCount.toString().padStart(3,'0')} ACTIVE MARKS / {controls.lifetime}s TTL</span><span>{dataset.unit} → {controls.axis.toUpperCase()}</span><button className="stage-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen?'Exit fullscreen':'View artwork fullscreen'} title={fullscreen?'Exit fullscreen (Esc)':'View artwork fullscreen'}>{fullscreen?<Minimize2/>:<Maximize2/>}</button></div>{fullscreenError&&<div className="fullscreen-error" role="status">{fullscreenError}</div>}<Suspense fallback={<DataArtCanvas events={events} mode={mode} controls={controls}/>}><PixiBloomCanvas key={mode} mode={mode} events={events} reference={reference} controls={controls} fallback={<DataArtCanvas events={events} mode={mode} controls={controls}/>}/></Suspense><div className="stage-caption"><strong>{modes.find(m=>m.id===mode)?.name}</strong><span>{dataset.name} / {controls.scale} scale</span></div></div>
+      <aside className="instrument-panel"><div className="instrument-tabs" role="tablist" aria-label="Artwork sidebar">{(['controls','feed'] as const).map(tab=><button key={tab} id={`sidebar-${tab}-tab`} role="tab" aria-selected={panelTab===tab} aria-controls={`sidebar-${tab}`} tabIndex={panelTab===tab?0:-1} onClick={()=>setPanelTab(tab)} onKeyDown={e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?'controls':e.key==='End'?'feed':tab==='controls'?'feed':'controls';setPanelTab(next);document.getElementById(`sidebar-${next}-tab`)?.focus()}}}>{tab==='controls'?<SlidersHorizontal/>:<Database/>}{tab==='controls'?'Controls':'Live ingestion'}</button>)}</div>
+      <div id="sidebar-controls" role="tabpanel" aria-labelledby="sidebar-controls-tab" hidden={panelTab!=='controls'}>
         <section><label>DATA SOURCE</label><div className="source-buttons">{datasets.map(d=>{const Icon=d.icon;return <button className={d.id===selected?'active':''} onClick={()=>setSelected(d.id)} key={d.id}><Icon/><span><b>{d.name}</b><small>{d.topic}</small></span><i/></button>})}</div><p className="source-description">{dataset.description} <a href={dataset.sourceUrl} target="_blank" rel="noreferrer">Source ↗</a></p></section>
         <section><div className="control-heading"><label>PLAYBACK</label><div><button onClick={()=>setRunning(v=>!v)}>{running?<Pause/>:<Play/>}</button><button onClick={connect}><RefreshCw/></button></div></div><Control label="Ingest frequency" value={controls.rate} min={1} max={15} suffix={`${controls.rate}/s`} onChange={v=>setControl('rate',v)}/><Control label="Expiry period" value={controls.lifetime} min={5} max={60} suffix={`${controls.lifetime}s TTL`} onChange={v=>setControl('lifetime',v)}/><Control label="Density" value={controls.density} min={10} max={100} suffix={`${controls.density}%`} onChange={v=>setControl('density',v)}/><Control label="Intensity" value={controls.intensity} min={10} max={100} suffix={`${controls.intensity}%`} onChange={v=>setControl('intensity',v)}/><Control label="Complexity / layers" value={controls.complexity} min={10} max={100} suffix={`${controls.complexity}%`} onChange={v=>setControl('complexity',v)}/><Control label="Motion energy" value={controls.motion} min={0} max={100} suffix={`${controls.motion}%`} onChange={v=>setControl('motion',v)}/></section>
         <section><label>MAPPING</label><div className="segmented"><button className={controls.axis==='value'?'active':''} onClick={()=>setControl('axis','value')}>Value</button><button className={controls.axis==='time'?'active':''} onClick={()=>setControl('axis','time')}>Time</button><button className={controls.axis==='sequence'?'active':''} onClick={()=>setControl('axis','sequence')}>Order</button></div><div className="segmented"><button className={controls.scale==='linear'?'active':''} onClick={()=>setControl('scale','linear')}>Linear</button><button className={controls.scale==='log'?'active':''} onClick={()=>setControl('scale','log')}>Log</button><button className={controls.scale==='rank'?'active':''} onClick={()=>setControl('scale','rank')}>Rank</button></div></section>
+      </div><div id="sidebar-feed" role="tabpanel" aria-labelledby="sidebar-feed-tab" hidden={panelTab!=='feed'}><section className="data-tape sidebar-tape"><div className="tape-heading"><div><Database/><span>RAW DATA / ARRIVAL TAPE</span></div><div>{dataset.live?'LIVE SNAPSHOT':'STATIC ARCHIVE'} · {raw.length} SOURCE RECORDS · LOOPING</div></div>{error?<div className="tape-error">{error} <button onClick={connect}>Retry connection</button></div>:<div className="tape-grid"><div className="raw-current"><span>NOW ENTERING</span><pre>{current?JSON.stringify(current,null,2):loading?'Awaiting source…':'No record'}</pre></div><div className="event-history">{events.slice(-8).reverse().map((e,i)=><article className={i===0?'current':''} key={`${e.id}-${e.born}`}><span>{String(cursor-i).padStart(4,'0')}</span><strong>{e.label}</strong><b>{e.value.toLocaleString()} {dataset.unit}</b><small>{i===0?'MAPPING TO CANVAS':'DECAYING'}</small></article>)}</div></div>}<footer><span><Gauge/> Browser → public HTTP API → JSON → visual mark → decay</span><span>Nothing is stored by this page</span></footer></section></div>
       </aside>
     </section>
     <section className="art-browser"><div><p className="section-code">02 / VISUAL LANGUAGE</p><h2>CHANGE THE<br/>INTERPRETATION.</h2></div><div className="mode-strip">{modes.map((m,i)=><button className={mode===m.id?'active':''} onClick={()=>setMode(m.id)} key={m.id}><span>0{i+1}</span><i className={`mode-swatch ${m.id}`}/><b>{m.name}</b><small>{m.description}</small></button>)}</div></section>
-    <section className="data-tape"><div className="tape-heading"><div><Database/><span>RAW DATA / ARRIVAL TAPE</span></div><div>{dataset.live?'LIVE SNAPSHOT':'STATIC ARCHIVE'} · {raw.length} SOURCE RECORDS · LOOPING</div></div>{error?<div className="tape-error">{error} <button onClick={connect}>Retry connection</button></div>:<div className="tape-grid"><div className="raw-current"><span>NOW ENTERING</span><pre>{current?JSON.stringify(current,null,2):loading?'Awaiting source…':'No record'}</pre></div><div className="event-history">{events.slice(-8).reverse().map((e,i)=><article className={i===0?'current':''} key={`${e.id}-${e.born}`}><span>{String(cursor-i).padStart(4,'0')}</span><strong>{e.label}</strong><b>{e.value.toLocaleString()} {dataset.unit}</b><small>{i===0?'MAPPING TO CANVAS':'DECAYING'}</small></article>)}</div></div>}<footer><span><Gauge/> Browser → public HTTP API → JSON → visual mark → decay</span><span>Nothing is stored by this page</span></footer></section>
+
   </div>
 }
 function Control({label,value,min,max,suffix,onChange}:{label:string;value:number;min:number;max:number;suffix:string;onChange:(value:number)=>void}){return <div className="range-control"><div><span>{label}</span><b>{suffix}</b></div><input type="range" min={min} max={max} value={value} onChange={e=>onChange(Number(e.target.value))}/></div>}

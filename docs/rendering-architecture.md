@@ -63,3 +63,30 @@ The browser suite checks all presets through the real React controls and renders
 ## Living Notation score pass
 
 `NotationScore.ts` maps primary metrics to a continuous grid of horizontal lines spaced 24px apart across the available canvas height. Dots have a uniform size and use the nine-color notation palette. Secondary metrics place uniform 36 by 72 pixel translucent rectangles; each source contributes several distributed bands to create a dense overlapping color field. Persistent quadratic arches link nodes throughout the field. Frequent falling dots snapshot their route at birth, remain opaque independently of source expiry, bounce between anchors across the field, and retire only after exiting below the canvas. GPU marks and edges fade with their source records, and CSS lines share the same top offset and spacing as the metric grid.
+
+## Shared homepage portraits
+
+Both front-page canvases use **Contour atlas**, with identical geometry, palette,
+24-by-12 temporal bins, and a shared date range. All records contribute to bins;
+there is no five-record truncation or per-canvas rescaling. Date determines x,
+local time of day determines y, weight determines radius, and count adds rings.
+The paired canvases animate on a shared clock at 30 fps: breathing contours, layered harmonics, soft halos, broken orbital arcs, and traveling points on threads between neighboring occupied bins. Both use identical motion rules. Rendering pauses offscreen and in hidden tabs; reduced-motion preferences show a static frame. Data refreshes preserve animation phase.
+
+The left canvas reads `frontend/src/data/machine-observations.json`: 168 explicitly
+synthetic hourly activity measurements from August 31–September 6, 2026. The right
+reads `GET /api/portrait/observations`, which includes every saved observation,
+ordered by observation time and ID. It refreshes every five seconds, retaining the
+last successful snapshot and showing an error if the API is unavailable.
+
+Human weight is `min(1, log1p(words + 40 * photos) / log1p(400))`;
+photo byte size controls contour irregularity on a fixed logarithmic 25 MB scale.
+Mock activity uses its fixed 0–100 scale for both features. These are documented
+artistic encodings, not a claim that word counts and activity are equivalent units.
+
+The read-only feed includes raw text, stored timestamps, source, timezone,
+submission context, text counts, media sizes and hashes, dimensions and available
+EXIF (including camera capture fields and GPS when present). Pillow reads existing
+photos as well as future uploads; missing or unreadable files are marked unavailable.
+Metadata extraction is cached by file path and stored content hash. Original logs
+and media are never rewritten, and no semantic or emotional labels are inferred.
+Run `pip install -r requirements.txt` in the backend environment after updating.

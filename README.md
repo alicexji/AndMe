@@ -54,3 +54,6 @@ Both write routes require `Authorization: Bearer <INGESTION_API_KEY>`.
 
 Run backend tests from `backend/` with `python -m pytest -q`.
 
+
+
+Playground also offers **Currency currents** (the previous full year's USD exchange-rate history against EUR, GBP, JPY, CAD and AUD from [Frankfurter / ECB](https://frankfurter.dev/v1/)) and **Life on Earth** (300 geolocated CC0 records from [GBIF](https://www.gbif.org/occurrence/search?license=CC0_1_0)). Both load without API keys and replay bounded datasets, rather than live trading or observation streams. Currency change percentage and rate, or latitude and longitude, drive the artwork. GBIF source links and licenses remain visible in the raw feed.

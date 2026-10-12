@@ -11,10 +11,20 @@ from .config import Settings, get_settings
 from .db import get_db
 from .media import LocalMediaStore
 from .models import HumanObservation, MachineEvent, MediaAsset, ObservationType
+from .portrait import metadata
 from .schemas import (DayOut, MachineDayOut, MachineEventOut, MediaOut,
                       ObservationCreate, ObservationOut)
 
 router = APIRouter(prefix="/api")
+
+
+@router.get("/portrait/observations")
+def portrait_observations(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    observations = db.scalars(select(HumanObservation).options(selectinload(HumanObservation.media))
+                              .order_by(HumanObservation.received_at, HumanObservation.id)).all()
+    return {"timezone": settings.app_timezone, "observations": [
+        {**observation_out(item, settings).model_dump(), "metadata": metadata(item, settings)}
+        for item in observations]}
 
 
 def observation_out(item: HumanObservation, settings: Settings) -> ObservationOut:

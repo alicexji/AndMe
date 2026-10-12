@@ -1,63 +1,54 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, Fingerprint } from 'lucide-react'
 import PortraitCanvas from './PortraitCanvas'
-import type { ArchiveDay, DataPoint, MachineDay } from '../types'
+import { humanMarks, minuteOfDay, type PortraitObservation } from '../rendering/PortraitFeatures'
+import mock from '../data/machine-observations.json'
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10) }
-
 export default function LivePortraits() {
-  const [human, setHuman] = useState<ArchiveDay | null>(null)
-  const [machine, setMachine] = useState<MachineDay | null>(null)
+  const [archive, setArchive] = useState<{ timezone: string; observations: PortraitObservation[] } | null>(null)
   const [updated, setUpdated] = useState<Date | null>(null)
-
+  const [error, setError] = useState(false)
   useEffect(() => {
-    let alive = true
+    let alive = true, timer = 0
+    const controller = new AbortController()
     const refresh = async () => {
-      const day = today()
       try {
-        const [humanResponse, machineResponse] = await Promise.all([
-          fetch(`${API}/api/days/${day}/observations`),
-          fetch(`${API}/api/days/${day}/machine-events`),
-        ])
-        if (!humanResponse.ok || !machineResponse.ok) throw new Error('Portrait stream unavailable')
-        const [humanDay, machineDay] = await Promise.all([humanResponse.json(), machineResponse.json()])
-        if (alive) { setHuman(humanDay); setMachine(machineDay); setUpdated(new Date()) }
-      } catch { /* status labels remain in their waiting state */ }
+        const response = await fetch(`${API}/api/portrait/observations`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]), cache: 'no-store' })
+        if (!response.ok) throw new Error('Archive unavailable')
+        const body = await response.json()
+        if (alive) { setArchive(body); setUpdated(new Date()); setError(false) }
+      } catch { if (alive) setError(true) }
+      finally { if (alive) timer = window.setTimeout(refresh, 5000) }
     }
-    refresh()
-    const timer = window.setInterval(refresh, 10000)
-    return () => { alive = false; window.clearInterval(timer) }
+    void refresh()
+    return () => { alive = false; controller.abort(); window.clearTimeout(timer) }
   }, [])
-
-  const humanData = useMemo<DataPoint[]>(() => human?.observations.map((item, index) => ({
-    value: Math.min(1, Math.max(.08, item.raw_text.length / 180 + item.media.length * .35)),
-    secondary: ((new Date(item.received_at).getHours() * 60 + new Date(item.received_at).getMinutes()) / 1440),
-    timestamp: new Date(item.received_at).getTime() + index,
-  })) ?? [], [human])
-  const values = machine?.events.map(event => Math.abs(event.value ?? 0)) ?? []
-  const max = Math.max(1, ...values)
-  const machineData = useMemo<DataPoint[]>(() => machine?.events.map((event, index) => ({
-    value: Math.min(1, Math.abs(event.value ?? 0) / max),
-    secondary: ((new Date(event.timestamp).getHours() * 60 + new Date(event.timestamp).getMinutes()) / 1440),
-    timestamp: new Date(event.timestamp).getTime() + index,
-  })) ?? [], [machine, max])
-
+  const timezone = archive?.timezone ?? 'America/New_York'
+  const human = useMemo(() => humanMarks(archive?.observations ?? [], timezone), [archive, timezone])
+  const machine = useMemo(() => mock.events.map(item => ({ timestamp: Date.parse(item.timestamp), minute: minuteOfDay(item.timestamp, timezone), weight: item.value / 100, texture: item.value / 100 })), [timezone])
+  const [start, end] = useMemo(() => {
+    const times = [...human, ...machine].map(mark => mark.timestamp)
+    return [times.reduce((a, b) => Math.min(a, b), Infinity), times.reduce((a, b) => Math.max(a, b), -Infinity)]
+  }, [human, machine])
   return <section className="live-portraits">
-    <div className="live-heading"><div><p className="section-code">LIVE DOUBLE PORTRAIT / TODAY</p><h2>TWO WITNESSES.<br />ONE DAY.</h2></div><p>A continuous current. A moment held onto. Two portraits shaped by the traces of your day.</p></div>
+    <div className="live-heading"><div><p className="section-code">DOUBLE PORTRAIT / COMPLETE ARCHIVE</p><h2>TWO WITNESSES.<br />ONE LANGUAGE.</h2></div><p>One palette, one contour system, one timeline. The records change the image. Machine measurements are simulated; your observations come from your saved logs.</p></div>
     <div className="portrait-grid">
-      <article className="portrait-panel machine-portrait">
-        <div className="portrait-top"><span>01 / MACHINE</span><span><i className={machineData.length ? '' : 'waiting'} /> {machineData.length ? 'STREAM ACTIVE' : 'AWAITING DATA'}</span></div>
-        <div className="portrait-canvas"><PortraitCanvas data={machineData} kind="machine" /><div className="portrait-art-title"><span>CONTINUOUS / 01</span><h3>Signal field</h3><p>Everything that passes.</p></div><span className="portrait-art-note">{machineData.length ? "EVENT-DRIVEN CONTOURS" : "AMBIENT STUDY / NO EVENTS YET"}</span><div className="portrait-watermark"><Activity /> THE DAY ACCORDING TO THE MACHINE</div></div>
-        <div className="portrait-bottom"><strong>{String(machineData.length).padStart(3,'0')}</strong><span>passive events today</span><span>{machine?.events.at(-1)?.metric ?? 'No machine source connected'}</span></div>
-      </article>
-      <article className="portrait-panel human-portrait">
-        <div className="portrait-top"><span>02 / ME</span><span><i className={humanData.length ? '' : 'waiting'} /> {humanData.length ? 'ARCHIVE GROWING' : 'AWAITING NOTICE'}</span></div>
-        <div className="portrait-canvas"><PortraitCanvas data={humanData} kind="human" /><div className="portrait-art-title"><span>INTENTIONAL / 02</span><h3>Traces of attention</h3><p>Something worth keeping.</p></div><span className="portrait-art-note">{humanData.length ? "MOMENTS INTO RINGS" : "AMBIENT STUDY / NO MOMENTS YET"}</span><div className="portrait-watermark"><Fingerprint /> THE DAY ACCORDING TO ME</div></div>
-        <div className="portrait-bottom"><strong>{String(humanData.length).padStart(3,'0')}</strong><span>chosen moments today</span><span>{human?.observations.at(-1)?.local_time ?? 'No notice preserved yet'}</span></div>
-      </article>
+      {[{ name: 'MACHINE', data: machine, status: 'MOCK DATA', caption: 'simulated measurements', note: 'Fixture / activity intensity, 0–100' },
+        { name: 'ME', data: human, status: error ? 'CONNECTION LOST' : archive ? 'ARCHIVE CONNECTED' : 'CONNECTING', caption: 'saved observations', note: 'All past logs / refreshed every 5 seconds' }].map((panel, index) =>
+        <article className="portrait-panel" key={panel.name}>
+          <div className="portrait-top"><span>0{index + 1} / {panel.name}</span><span><i className={index === 0 || error || !archive ? 'waiting' : ''} />{panel.status}</span></div>
+          <div className="portrait-canvas"><PortraitCanvas data={panel.data} start={start} end={end} label={panel.name} />
+            <div className="portrait-art-title"><span>SHARED PRESET / 01</span><h3>Contour atlas</h3><p>{index === 0 ? 'A simulated rhythm of passive attention.' : 'The accumulated shape of what you noticed.'}</p></div>
+            </div>
+          <div className="portrait-bottom"><strong>{String(panel.data.length).padStart(3, '0')}</strong><span>{panel.caption}</span><span>{panel.note}</span></div>
+        </article>)}
     </div>
-    <p className="last-update">LIVE POLL / {updated ? updated.toLocaleTimeString() : 'CONNECTING'} / RAW INPUT ONLY</p>
+    <p className="last-update" role="status">{error ? 'ARCHIVE UNAVAILABLE / SHOWING LAST SUCCESSFUL SNAPSHOT' : `LAST SYNC / ${updated ? updated.toLocaleTimeString() : 'CONNECTING'}`} / {timezone}</p>
+    <details><summary>How the same preset reads both archives</summary>
+      <p>Left to right: date across the shared archive range ({new Date(start).toLocaleDateString()}–{new Date(end).toLocaleDateString()}). Top to bottom: local time of day, midnight to midnight. Each contour groups records in the same time bin. More records add rings; higher weight widens the contour. Empty bins stay empty.</p>
+      <p>Human weight uses log-scaled word count plus 40 per photo, capped at 400; photo byte size shapes contour irregularity. Mock machine weight and irregularity use activity intensity divided by 100. These are artistic encodings, not equivalent scientific measurements. Both use identical colors, geometry, temporal bins, and fixed scales.</p>
+      <p>Metadata includes original text, observation time, source, timezone, submission context, word and character counts, attachment sizes and hashes, and available image dimensions and EXIF. No mood or meaning is inferred.</p>
+      <a href={`${API}/api/portrait/observations`} target="_blank" rel="noreferrer">Inspect your archive and extracted metadata (JSON)</a>
+    </details>
   </section>
 }
-

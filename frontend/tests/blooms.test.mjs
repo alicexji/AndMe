@@ -125,3 +125,18 @@ test('falling notation nodes survive source removal and exit below the canvas', 
   assert.ok(buffer[1] > 800)
   assert.equal(composeScore([], 2.11, 50, buffer, 800, 800), 0)
 })
+
+const { currencyRecords, biodiversityRecords } = await import(moduleURL(new URL('../src/rendering/OpenDatasets.ts', import.meta.url)))
+test('currency changes compare each currency to its own previous date',()=>{
+  const rows=currencyRecords({rates:{'2025-01-03':{EUR:1.1,JPY:180},'2025-01-02':{EUR:1,JPY:200}}})
+  assert.equal(rows.length,2)
+  assert.ok(Math.abs(rows[0].changePercent-10)<1e-9)
+  assert.ok(Math.abs(rows[1].changePercent+10)<1e-9)
+  assert.equal(rows[0].pair,'USD/EUR')
+})
+test('biodiversity keeps zero coordinates and excludes missing coordinates',()=>{
+  const rows=biodiversityRecords({results:[{key:1,decimalLatitude:0,decimalLongitude:0,license:'CC0'},{key:2,decimalLatitude:null,decimalLongitude:5}]})
+  assert.equal(rows.length,1)
+  assert.equal(rows[0].latitude,0)
+  assert.equal(rows[0].license,'CC0')
+})
